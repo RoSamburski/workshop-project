@@ -3,6 +3,7 @@ from enum import Enum
 
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset
 import numpy as np
 from pathlib import Path
 
@@ -20,7 +21,7 @@ batch_size = 64
 image_size = 64
 
 # maximum number of animation frames. We may generate less but never more.
-max_animation_length = 16
+max_animation_length = 8
 
 # number of color channels in images. We use colored images so 3
 # We will actually do color reduction later as every image will use its' own palette.
@@ -32,8 +33,9 @@ nc = 3
 # Input consists of:
 # 1. A sample image ("Reference"),
 # 2. Desired direction (Left/right) of result
-# 3. Desired number of animation frames
-nz = (image_size**2)*nc + 2
+# 3. Desired animation type
+# 4. Desired number of animation frames
+nz = (image_size**2)*nc + 3
 
 # Size of feature maps in generator
 ngf = 64
@@ -50,6 +52,9 @@ lr = 0.0002
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
 
+# Dropout rate for multi-class Disctiminator
+dropout = 0.2
+
 # Number of GPUs available. The computer used to training has one.
 ngpu = 1
 
@@ -57,8 +62,9 @@ ngpu = 1
 """ Enums for value representation """
 class FrameType(Enum):
     REF = 0
-    WALK = 1
-    JUMP = 2
+    IDLE = 1
+    WALK = 2
+    JUMP = 3
 
 
 class Direction(Enum):
@@ -76,32 +82,33 @@ def weights_init(m):
         nn.init.constant_(m.bias.data, 0)
 
 
-# Generator class, straight from example
+# Generator class, straight from example.
+# modified feature spaces to also account for animation (additional image dimension)
 class Generator(nn.Module):
     def __init__(self, ngpu):
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is Z, going into a convolution
-            nn.ConvTranspose2d(nz, ngf * 8, 4, 1, 0, bias=False),
-            nn.BatchNorm2d(ngf * 8),
+            nn.ConvTranspose2d(nz, ngf * 8 * max_animation_length, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(ngf * 8 * max_animation_length),
             nn.ReLU(True),
-            # state size. (ngf*8) x 4 x 4
-            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 4),
+            # state size. (ngf*8) x 4 x 4 x (mal)
+            nn.ConvTranspose2d(ngf * 8 * max_animation_length, ngf * 4 * max_animation_length, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 4 * max_animation_length),
             nn.ReLU(True),
-            # state size. (ngf*4) x 8 x 8
-            nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 2),
+            # state size. (ngf*4) x 8 x 8 x (mal)
+            nn.ConvTranspose2d(ngf * 4 * max_animation_length, ngf * 2 * max_animation_length, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 2 * max_animation_length),
             nn.ReLU(True),
-            # state size. (ngf*2) x 16 x 16
+            # state size. (ngf*2) x 16 x 16 x (mal)
             nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf),
+            nn.BatchNorm2d(ngf * max_animation_length),
             nn.ReLU(True),
-            # state size. (ngf) x 32 x 32
-            nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=False),
+            # state size. (ngf) x 32 x 32 x (mal)
+            nn.ConvTranspose2d(ngf * max_animation_length, nc*max_animation_length, 4, 2, 1, bias=False),
             nn.Tanh()
-            # state size. (nc) x 64 x 64
+            # state size. (nc) x 64 x 64 x (mal)
         )
 
     def forward(self, input):
@@ -109,13 +116,14 @@ class Generator(nn.Module):
 
 
 # Discriminator class, straight from example
+# Might need to add dropout after each LeakyReLu for multi-class
 class Discriminator(nn.Module):
     def __init__(self, ngpu):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
         self.main = nn.Sequential(
-            # input is (nc) x 64 x 64
-            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
+            # input is (nc) x 64 x 64 x (mal)
+            nn.Conv2d(nc * max_animation_length, ndf, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf) x 32 x 32
             nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
@@ -136,6 +144,55 @@ class Discriminator(nn.Module):
 
     def forward(self, input):
         return self.main(input)
+
+
+class MulticlassDiscriminator(nn.Module):
+    def __init__(self, ngpu):
+        super(MulticlassDiscriminator, self).__init__()
+        self.ngpu = ngpu
+        self.main = nn.Sequential(
+            # input is (nc) x 64 x 64 x (mal)
+            nn.Conv2d(nc * max_animation_length, ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # Drop-out for classification
+            nn.Dropout(p=dropout),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Dropout(p=dropout),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Dropout(p=dropout),
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Dropout(p=dropout),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False),
+            # We use semi-supervised learning, so we will utilise softmax
+            nn.Softmax(),
+        )
+
+    def forward(self, input):
+        return self.main(input)
+
+
+class AnimationDataset(Dataset):
+    def __init__(self, labeling_file, root_dir, transform=None, target_transform=None):
+        self.label_set = labeling_file
+        self.root_dir = root_dir
+        self.transform = transform
+        self.target_transform = target_transform
+
+    def __len__(self):
+        return len(self.label_set)
+
+    def __getitem__(self, idx):
+        return
 
 
 def load_data(root_path: str) -> np.array:

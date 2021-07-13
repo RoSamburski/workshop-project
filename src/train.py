@@ -3,10 +3,14 @@ from enum import Enum
 
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from torch.utils.data import Dataset
 from torchvision.io import read_image
+import torchvision.utils as vutils
 import numpy as np
 from pathlib import Path
+import matplotlib.pyplot as plt
+import pandas as pd
 
 # This implementation of DCGAN is based on the code in:
 # https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
@@ -15,6 +19,8 @@ from pathlib import Path
 """ Constants: """
 
 dataset_root = "data"
+
+labels = "labels.csv"
 
 batch_size = 64
 
@@ -58,6 +64,9 @@ dropout = 0.2
 
 # Number of GPUs available. The computer used to training has one.
 ngpu = 1
+
+# Device training is performed on
+device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
 
 class FrameType(Enum):
@@ -192,7 +201,7 @@ class AnimationDataset(Dataset):
     The labeling file contains the folder names, followed by the metadata of the animation (direction+type)
     """
     def __init__(self, labeling_file, root_dir, transform=None, target_transform=None):
-        self.label_set = labeling_file  # TODO: read labeling file
+        self.label_set = pd.read_csv(labeling_file)
         self.root_dir = root_dir
         self.data_set = self.build_dataset()
         self.transform = transform
@@ -204,7 +213,7 @@ class AnimationDataset(Dataset):
     def __getitem__(self, idx):
         char_path = Path(os.path.join(self.root_dir, self.data_set[idx]))
         item = np.ndarray((max_animation_length+1,))
-        label = None  # TODO
+        label = self.label_set.iloc([idx, 1])  # TODO: Handle unlabeled data
         for image in char_path.iterdir():
             if "REF" in image.name.upper():
                 # Reference image
@@ -222,36 +231,127 @@ class AnimationDataset(Dataset):
         return data_set
 
 
-def load_data(root_path: str) -> np.array:
-    """
-    Loads the data from the database.
-    Entries are folders of the following structure:
-    [name]
-    ->
-    :param root_path: Path to the database's root.
-    :return:
-    """
-    root = Path(root_path)
-    ret = []
-    assert root.is_dir(), "argument must specify a folder"
-    for char in root.iterdir():
-        if char.is_dir():
-            reference = None
-            animation = np.ndarray((max_animation_length,))
-            for image in char.iterdir():
-                if "REF" in image.name.upper():
-                    # Reference image
-                    reference = read_image(os.path.join(root, char, image))
-                else:
-                    index = int(image.name.split(".")[0])
-                    animation[index] = read_image(os.path.join(root, char, image))
-            ret.append((reference, animation))
-    return np.ndarray(ret)
+def model_init():
+    G = Generator(ngpu).to(device)
+    G.apply(weights_init)
+    D = Discriminator(ngpu).to(device)
+    D.apply(weights_init)
+    return G, D
+
+
+def dataloader_init():
+    dataset = AnimationDataset(root_dir=dataset_root, labeling_file=labels)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    return dataloader
+
+
+def single_class_training():
+    # INIT STEP:
+    dataloader = dataloader_init()
+    # Create models and initialize loss function
+    G, D = model_init()
+    loss_func = nn.BCELoss()
+    optimizerD = optim.Adam(D.parameters(), lr=lr, betas=(beta1, 0.999))
+    optimizerG = optim.Adam(G.parameters(), lr=lr, betas=(beta1, 0.999))
+
+    # Label conventions
+    real_label, fake_label = 1, 0
+
+    # Things we keep track of to see progress
+    img_examples = []
+    example_reference = None  # TODO
+    G_losses = []
+    D_losses = []
+    iters = 0
+
+    # TRAINING LOOP
+    print("Begin Training")
+    for epoch in range(num_epochs):
+        # For each batch in the dataloader
+        for i, data in enumerate(dataloader, 0):
+
+            ############################
+            # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+            ###########################
+            # Train with all-real batch
+            D.zero_grad()
+            # Format batch
+            real_cpu = data[0].to(device)
+            b_size = real_cpu.size(0)
+            label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+            # Forward pass real batch through D
+            output = D(real_cpu).view(-1)
+            # Calculate loss on all-real batch
+            errD_real = loss_func(output, label)
+            # Calculate gradients for D in backward pass
+            errD_real.backward()
+            D_x = output.mean().item()
+
+            # Train with all-fake batch #
+            # Generate batch of latent vectors
+            # TODO: Set up random input
+            noise = torch.randn(b_size, nz, 1, 1, device=device)
+            # Generate fake image batch with G
+            fake = G(noise)
+            label.fill_(fake_label)
+            # Classify all fake batch with D
+            output = D(fake.detach()).view(-1)
+            # Calculate D's loss on the all-fake batch
+            errD_fake = loss_func(output, label)
+            # Calculate the gradients for this batch, accumulated (summed) with previous gradients
+            errD_fake.backward()
+            D_G_z1 = output.mean().item()
+            # Compute error of D as sum over the fake and the real batches
+            errD = errD_real + errD_fake
+            # Update D
+            optimizerD.step()
+
+            ############################
+            # (2) Update G network: maximize log(D(G(z)))
+            ###########################
+            G.zero_grad()
+            label.fill_(real_label)  # fake labels are real for generator cost
+            # Since we just updated D, perform another forward pass of all-fake batch through D
+            output = D(fake).view(-1)
+            # Calculate G's loss based on this output
+            errG = loss_func(output, label)
+            # Calculate gradients for G
+            errG.backward()
+            D_G_z2 = output.mean().item()
+            # Update G
+            optimizerG.step()
+
+            # Output training stats
+            if i % 50 == 0:
+                print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
+                      % (epoch, num_epochs, i, len(dataloader),
+                         errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+
+            # Save Losses for plotting later
+            G_losses.append(errG.item())
+            D_losses.append(errD.item())
+
+            # Check how the generator is doing by saving G's output on fixed_noise
+            if (iters % 500 == 0) or ((epoch == num_epochs - 1) and (i == len(dataloader) - 1)):
+                with torch.no_grad():
+                    fake = G(example_reference).detach().cpu()
+                img_examples.append(vutils.make_grid(fake, padding=2, normalize=True))
+
+            iters += 1
+
+    # Plot result
+    plt.figure(figsize=(10, 5))
+    plt.title("Generator and Discriminator Loss During Training")
+    plt.plot(G_losses, label="G")
+    plt.plot(D_losses, label="D")
+    plt.xlabel("iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.show()
 
 
 def main():
-    # TODO: training
-    pass
+    single_class_training()
 
 
 if __name__ == "__main__":

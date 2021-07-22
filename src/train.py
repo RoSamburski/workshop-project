@@ -10,7 +10,8 @@ import torchvision.utils as vutils
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
-import pandas as pd
+
+import database_handler
 
 # This implementation of DCGAN is based on the code in:
 # https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
@@ -19,6 +20,8 @@ import pandas as pd
 """ Constants: """
 
 dataset_root = "data"
+
+generator_inputs = "references"
 
 labels = "labels.csv"
 
@@ -67,19 +70,6 @@ ngpu = 1
 
 # Device training is performed on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
-
-
-class FrameType(Enum):
-    """ Enums for value representation """
-    REF = 0
-    IDLE = 1
-    WALK = 2
-    JUMP = 3
-
-
-class Direction(Enum):
-    L = 0
-    R = 1
 
 
 # Weight initialization, as recommended
@@ -192,45 +182,6 @@ class MulticlassDiscriminator(nn.Module):
         return self.main(input)
 
 
-class AnimationDataset(Dataset):
-    """
-    Dataset class made for loading our dataset.
-    Every "data-point" is a folder containing:
-    1. Reference image (titled REF.png)
-    2. Animation frames (titled as numbers by order: 0.png to <MAL-1>.png)
-    The labeling file contains the folder names, followed by the metadata of the animation (direction+type)
-    """
-    def __init__(self, labeling_file, root_dir, transform=None, target_transform=None):
-        self.label_set = pd.read_csv(labeling_file)
-        self.root_dir = root_dir
-        self.data_set = self.build_dataset()
-        self.transform = transform
-        self.target_transform = target_transform
-
-    def __len__(self):
-        return len(self.data_set)
-
-    def __getitem__(self, idx):
-        char_path = Path(os.path.join(self.root_dir, self.data_set[idx]))
-        item = np.ndarray((max_animation_length+1,))
-        label = self.label_set.iloc([idx, 1])  # TODO: Handle unlabeled data
-        for image in char_path.iterdir():
-            if "REF" in image.name.upper():
-                # Reference image
-                item[0] = read_image(os.path.join(self.root_dir, self.data_set[idx], image))
-            else:
-                index = int(image.name.split(".")[0])
-                item[index+1] = read_image(os.path.join(self.root_dir, self.data_set[idx], image))
-        return item, label
-
-    def build_dataset(self):
-        # TODO: put labeled examples first
-        data_set = []
-        for folder in Path(self.root_dir).iterdir():
-            data_set.append(folder.name)
-        return data_set
-
-
 def model_init():
     G = Generator(ngpu).to(device)
     G.apply(weights_init)
@@ -240,7 +191,8 @@ def model_init():
 
 
 def dataloader_init():
-    dataset = AnimationDataset(root_dir=dataset_root, labeling_file=labels)
+    # TODO: Add padding transform
+    dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
     return dataloader
 

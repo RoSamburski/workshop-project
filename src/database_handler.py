@@ -15,7 +15,7 @@ GENERATOR_INPUT = "references"
 
 LABELS = "labels.csv"
 
-MAX_ANIMATION_LENGTH = 8
+MAX_ANIMATION_LENGTH = 16
 
 
 class AnimationType(Enum):
@@ -24,12 +24,13 @@ class AnimationType(Enum):
     WALK = 1
     RUN = 2
     JUMP = 3
+
     def regex_of(self):
         """
         Returns the regex used for matching according to naming convention
         :return: the string of the regex
         """
-        return "^{}(ALT)?[LR]?[0-9]?".format(self.name)
+        return "{}(ALT)?[LR]?[0-9]?".format(self.name)
 
     @classmethod
     def matching_type(cls, string: str):
@@ -37,6 +38,7 @@ class AnimationType(Enum):
             if re.match(cls.regex_of(member), string) is not None:
                 return member
         return None
+
 
 class Direction(Enum):
     L = 0
@@ -101,7 +103,7 @@ class AnimationDataset(Dataset):
         return data_set
 
 
-def verify():
+def verify(width_limit=80, height_limit=80):
     """
     Validates the database and prints any errors in it.
     Prints statistics
@@ -109,10 +111,23 @@ def verify():
     """
     animation_lengths = []
     max_height, max_width = 0, 0
+    longest_image, widest_image = None, None
+    exceeding = 0
     print("Database size: {} objects".format(len([x for x in Path(DATASET_ROOT).iterdir() if x.is_dir()])))
     for folder in Path(DATASET_ROOT).iterdir():
         if folder.is_dir():
             frames = [x.name for x in folder.iterdir()]
+            for frame in frames:
+                frame_tensor = read_image(os.path.join(DATASET_ROOT, folder.name, frame))
+                dimensions = list(frame_tensor.size())
+                if dimensions[1] > max_height:
+                    max_height = dimensions[1]
+                    longest_image = folder.name + "/" + frame
+                if dimensions[2] > max_width:
+                    max_width = dimensions[2]
+                    widest_image = folder.name + "/" + frame
+                if dimensions[1] > height_limit or dimensions[2] > width_limit:
+                    exceeding += 1
             if len(frames) == 0:
                 print("{}: empty".format(folder.name))
             elif len(frames) == 1:
@@ -126,8 +141,9 @@ def verify():
                     print("{}: no reference".format(folder.name))
                 else:
                     animation_lengths.append(len(frames)-1)
-    print("Recommended animation length: {}".format(np.percentile(animation_lengths), 90))
-    print("Greatest dimensions in dataset: {}x{}".format(max_width, max_height))
+    print("Recommended animation length: {}".format(np.percentile(animation_lengths, 99)))
+    print("Greatest dimensions in dataset: {} ({}) x{} ({})".format(max_width, widest_image, max_height, longest_image))
+    print("{} images are exceeding 80x80".format(exceeding))
 
 
 def generate_label_file():
@@ -147,17 +163,28 @@ def generate_label_file():
 
 
 def main():
-    print("Verifying dataset")
-    verify()
-    label_file = Path(LABELS)
-    if not label_file.exists():
-        create_file = input("Label file not found. Create? (Y/N)").upper()
-        if create_file.upper() == "Y":
-            generate_label_file()
-    else:
-        create_file = input("Label file existing. Truncate? (Y/N)").upper()
-        if create_file.upper() == "Y":
-            generate_label_file()
+    while True:
+        action = input("Which action to take?\nVERIFY dataset and get statistics\nGENERATE label file\nQUIT\n")
+        if action.upper() == "VERIFY":
+            print("Verifying dataset")
+            try:
+                frame_boundary = input("What width/height should the sprites be limited to?")
+                width_boundary, height_boundary = int(frame_boundary.split()[0]), int(frame_boundary.split()[1])
+                verify(width_boundary, height_boundary)
+            except TypeError:
+                print("")
+        elif action.upper() == "GENERATE":
+            label_file = Path(LABELS)
+            if label_file.exists():
+                create_file = input("Label file existing. Truncate? (Y/N)").upper()
+                if create_file.upper() == "Y":
+                    print("Generating label file")
+                    generate_label_file()
+            else:
+                print("Generating label file")
+                generate_label_file()
+        elif action.upper() == "QUIT":
+            exit(0)
 
 
 if __name__ == "__main__":

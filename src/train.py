@@ -26,13 +26,13 @@ generator_inputs = database_handler.GENERATOR_INPUT
 
 labels = database_handler.LABELS
 
-batch_size = 64
-
 # Size of images
-image_size = 80
+image_size = database_handler.IMAGE_SIZE
 
 # maximum number of animation frames. We may generate less but never more.
 max_animation_length = database_handler.MAX_ANIMATION_LENGTH
+
+batch_size = 64
 
 # number of color channels in images. We use colored images so 3
 # We will actually do color reduction later as every image will use its' own palette.

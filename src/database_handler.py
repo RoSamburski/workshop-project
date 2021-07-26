@@ -4,9 +4,11 @@ from enum import Enum
 from pathlib import Path
 import numpy as np
 import torch
+import torchvision.transforms as T
 from torch.utils.data import Dataset
 import pandas as pd
 from torchvision.io import read_image
+import matplotlib.pyplot as plt
 
 """Dataset Constants"""
 DATASET_ROOT = "data"
@@ -16,6 +18,8 @@ GENERATOR_INPUT = "references"
 LABELS = "labels.csv"
 
 MAX_ANIMATION_LENGTH = 16
+
+IMAGE_SIZE = 80
 
 
 class AnimationType(Enum):
@@ -39,6 +43,13 @@ class AnimationType(Enum):
                 return member
         return None
 
+    @classmethod
+    def parse_string(cls, string: str):
+        for member in list(cls):
+            if member.name == string:
+                return member
+        return None
+
 
 class Direction(Enum):
     L = 0
@@ -56,26 +67,27 @@ class AnimationDataset(Dataset):
     def __init__(self, labeling_file, root_dir, transform=None, target_transform=None):
         self.label_set = pd.read_csv(labeling_file)
         self.root_dir = root_dir
-        self.data_set = self.build_dataset()
+        self.full_dataset = self.build_dataset()
         self.transform = transform
         self.target_transform = target_transform
 
     def __len__(self):
-        return len(self.data_set)
+        return len(self.label_set)
 
     def __getitem__(self, idx):
-        char_path = Path(os.path.join(self.root_dir, self.data_set[idx]))
+        char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx, 0]))
+        print("Fetching {}".format(char_path))
         reference = None
         animation = {}
         for image in char_path.iterdir():
             if "REF" in image.name.upper():
                 # Reference image
-                reference = read_image(os.path.join(self.root_dir, self.data_set[idx], image))
+                reference = read_image(str(image))
                 if self.transform:
                     reference = self.transform(reference)
             else:
                 index = int(image.name.split(".")[0])
-                animation[index] = read_image(os.path.join(self.root_dir, self.data_set[idx], image))
+                animation[index] = read_image(str(image))
                 if self.transform:
                     animation[index] = self.transform(animation[index])
         assert reference is not None, "Missing reference for {}".format(char_path)
@@ -83,12 +95,21 @@ class AnimationDataset(Dataset):
         if len(animation) > MAX_ANIMATION_LENGTH:
             # Handling of animations that are "too long" for us.
             indices = np.random.choice(indices, replace=False).sort()
-        item = np.ndarray([reference] + [animation[i] for i in indices] + [torch.zeros(len(animation[0]))])
-
+        animation_array = [animation[i] for i in indices]
+        padding = [torch.zeros(animation[0].shape) for i in range(MAX_ANIMATION_LENGTH - len(animation))]
+        # print(reference.shape)
+        # print([frame.shape for frame in animation_array])
+        print([pad.shape for pad in padding])
+        # TODO: Padding causes the entire tensor to be zeroed
+        item = torch.stack([reference] + animation_array + padding)
+        # item = torch.stack([reference] + animation_array)
+        print(item.shape)
         try:
             # Label format:
-            # (Type, Direction, Animation-Length)
-            label = (self.label_set.iloc([idx, 1]), self.label_set.iloc([idx, 2]), min(len(animation), MAX_ANIMATION_LENGTH))
+            # (Type, Animation-Length)
+            # Currently ignores direction
+            label = (AnimationType.parse_string(self.label_set.iloc[idx, 1]),
+                     min(len(animation), MAX_ANIMATION_LENGTH))
             if self.target_transform:
                 label = self.target_transform(label)
         except IndexError:
@@ -99,10 +120,11 @@ class AnimationDataset(Dataset):
     def build_dataset(self):
         data_set = []
         for labeled_data in self.label_set:
-            data_set.append(labeled_data[0])
+            data_set.append(labeled_data)
         for folder in Path(self.root_dir).iterdir():
-            if folder not in data_set:
+            if folder.is_dir() and folder.name not in data_set:
                 data_set.append(folder.name)
+        # print("{} {}".format(data_set[0], data_set[1]))
         return data_set
 
 
@@ -123,11 +145,11 @@ def verify(width_limit=80, height_limit=80):
             for frame in frames:
                 frame_tensor = read_image(os.path.join(DATASET_ROOT, folder.name, frame))
                 dimensions = list(frame_tensor.size())
-                if dimensions[1] > max_height:
-                    max_height = dimensions[1]
+                if dimensions[len(dimensions)-2] > max_height:
+                    max_height = dimensions[len(dimensions)-2]
                     longest_image = folder.name + "/" + frame
-                if dimensions[2] > max_width:
-                    max_width = dimensions[2]
+                if dimensions[-1] > max_width:
+                    max_width = dimensions[-1]
                     widest_image = folder.name + "/" + frame
                 if dimensions[1] > height_limit or dimensions[2] > width_limit:
                     exceeding += 1
@@ -165,9 +187,34 @@ def generate_label_file():
     label_file.close()
 
 
+def test_data_fetching():
+    dataset = AnimationDataset(labeling_file=LABELS, root_dir=DATASET_ROOT,
+                               transform=T.Compose([
+                                   T.Pad(IMAGE_SIZE),
+                                   T.CenterCrop(IMAGE_SIZE)
+                               ]))
+    to_image = T.Compose([
+        T.ToPILImage(),
+        np.array
+    ])
+    plt.axis("off")
+    for i in range(10):
+        fetch_image, fetch_label = dataset[np.random.randint(0, len(dataset))]
+        print(fetch_label)
+        print(fetch_image.shape)
+        for j in range(0, MAX_ANIMATION_LENGTH+1):
+            plt.subplot(5, 4, j+1)
+            plt.imshow(to_image(fetch_image[j]))
+        plt.show()
+
+
 def main():
     while True:
-        action = input("Which action to take?\nVERIFY dataset and get statistics\nGENERATE label file\nQUIT\n")
+        action = input("Which action to take?\n"
+                       "VERIFY dataset and get statistics\n"
+                       "GENERATE label file\n"
+                       "TEST dataset fetching\n"
+                       "QUIT\n")
         if action.upper() == "VERIFY":
             print("Verifying dataset")
             try:
@@ -175,7 +222,7 @@ def main():
                 width_boundary, height_boundary = int(frame_boundary.split()[0]), int(frame_boundary.split()[1])
                 verify(width_boundary, height_boundary)
             except TypeError:
-                print("")
+                print("Please provide numbers")
         elif action.upper() == "GENERATE":
             label_file = Path(LABELS)
             if label_file.exists():
@@ -186,6 +233,9 @@ def main():
             else:
                 print("Generating label file")
                 generate_label_file()
+        elif action.upper() == "TEST":
+            print("Begin testing")
+            test_data_fetching()
         elif action.upper() == "QUIT":
             exit(0)
 

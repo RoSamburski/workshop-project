@@ -30,7 +30,7 @@ class AnimationType(Enum):
         Returns the regex used for matching according to naming convention
         :return: the string of the regex
         """
-        return "{}(ALT)?[LR]?[0-9]?".format(self.name)
+        return ".*{}(ALT)?[LR]?[0-9]?$".format(self.name)
 
     @classmethod
     def matching_type(cls, string: str):
@@ -67,13 +67,6 @@ class AnimationDataset(Dataset):
         char_path = Path(os.path.join(self.root_dir, self.data_set[idx]))
         reference = None
         animation = {}
-        try:
-            label = self.label_set.iloc([idx, 1])
-            if self.target_transform:
-                label = self.target_transform(label)
-        except IndexError:
-            # Data is unlabeled
-            label = None
         for image in char_path.iterdir():
             if "REF" in image.name.upper():
                 # Reference image
@@ -91,6 +84,16 @@ class AnimationDataset(Dataset):
             # Handling of animations that are "too long" for us.
             indices = np.random.choice(indices, replace=False).sort()
         item = np.ndarray([reference] + [animation[i] for i in indices] + [torch.zeros(len(animation[0]))])
+
+        try:
+            # Label format:
+            # (Type, Direction, Animation-Length)
+            label = (self.label_set.iloc([idx, 1]), self.label_set.iloc([idx, 2]), min(len(animation), MAX_ANIMATION_LENGTH))
+            if self.target_transform:
+                label = self.target_transform(label)
+        except IndexError:
+            # Data is unlabeled
+            label = None
         return item, label
 
     def build_dataset(self):
@@ -143,7 +146,7 @@ def verify(width_limit=80, height_limit=80):
                     animation_lengths.append(len(frames)-1)
     print("Recommended animation length: {}".format(np.percentile(animation_lengths, 99)))
     print("Greatest dimensions in dataset: {} ({}) x{} ({})".format(max_width, widest_image, max_height, longest_image))
-    print("{} images are exceeding 80x80".format(exceeding))
+    print("{} images are exceeding {}x{}".format(exceeding, width_limit, height_limit))
 
 
 def generate_label_file():

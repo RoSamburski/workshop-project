@@ -4,6 +4,7 @@ from enum import Enum
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision.transforms
 from torch.utils.data import Dataset
 from torchvision.io import read_image
 import torchvision.utils as vutils
@@ -19,19 +20,19 @@ import database_handler
 
 """ Constants: """
 
-dataset_root = "data"
+dataset_root = database_handler.DATASET_ROOT
 
-generator_inputs = "references"
+generator_inputs = database_handler.GENERATOR_INPUT
 
-labels = "labels.csv"
+labels = database_handler.LABELS
 
 batch_size = 64
 
 # Size of images
-image_size = 64
+image_size = 80
 
 # maximum number of animation frames. We may generate less but never more.
-max_animation_length = 8
+max_animation_length = database_handler.MAX_ANIMATION_LENGTH
 
 # number of color channels in images. We use colored images so 3
 # We will actually do color reduction later as every image will use its' own palette.
@@ -191,8 +192,11 @@ def model_init():
 
 
 def dataloader_init():
-    # TODO: Add padding transform
-    dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels)
+    dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels,
+                                                transform=torchvision.transforms.Compose([
+                                                    torchvision.transforms.Pad(image_size),
+                                                    torchvision.transforms.CenterCrop(image_size)
+                                                ]))
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
     return dataloader
 

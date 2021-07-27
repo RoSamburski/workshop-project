@@ -97,13 +97,7 @@ class AnimationDataset(Dataset):
             indices = np.random.choice(indices, replace=False).sort()
         animation_array = [animation[i] for i in indices]
         padding = [torch.zeros(animation[0].shape) for i in range(MAX_ANIMATION_LENGTH - len(animation))]
-        # print(reference.shape)
-        # print([frame.shape for frame in animation_array])
-        print([pad.shape for pad in padding])
-        # TODO: Padding causes the entire tensor to be zeroed
         item = torch.stack([reference] + animation_array + padding)
-        # item = torch.stack([reference] + animation_array)
-        print(item.shape)
         try:
             # Label format:
             # (Type, Animation-Length)
@@ -190,21 +184,29 @@ def generate_label_file():
 def test_data_fetching():
     dataset = AnimationDataset(labeling_file=LABELS, root_dir=DATASET_ROOT,
                                transform=T.Compose([
-                                   T.Pad(IMAGE_SIZE),
+                                   # T.Pad(IMAGE_SIZE),
                                    T.CenterCrop(IMAGE_SIZE)
                                ]))
     to_image = T.Compose([
         T.ToPILImage(),
-        np.array
+        np.array,
     ])
-    plt.axis("off")
     for i in range(10):
         fetch_image, fetch_label = dataset[np.random.randint(0, len(dataset))]
         print(fetch_label)
         print(fetch_image.shape)
-        for j in range(0, MAX_ANIMATION_LENGTH+1):
+        for j in range(0, len(fetch_image)):
             plt.subplot(5, 4, j+1)
-            plt.imshow(to_image(fetch_image[j]))
+            # TODO: Figure out why Alpha channel does not work, or just drop it.
+            plt.imshow(to_image(fetch_image[j, [0, 1, 2]]))
+        # plt.subplot(2, 2, 1)
+        # plt.imshow(to_image(fetch_image[0][0]))  # R
+        # plt.subplot(2, 2, 2)
+        # plt.imshow(to_image(fetch_image[0][1]))  # G
+        # plt.subplot(2, 2, 3)
+        # plt.imshow(to_image(fetch_image[0][2]))  # B
+        # plt.subplot(2, 2, 4)
+        # plt.imshow(to_image(fetch_image[0][3]))  # Alpha
         plt.show()
 
 

@@ -193,10 +193,8 @@ def model_init():
 
 def dataloader_init():
     dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels,
-                                                transform=torchvision.transforms.Compose([
-                                                    torchvision.transforms.Pad(image_size),
-                                                    torchvision.transforms.CenterCrop(image_size)
-                                                ]))
+                                                transform=torchvision.transforms.CenterCrop(image_size),
+                                                )
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
     return dataloader
 

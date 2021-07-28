@@ -46,7 +46,8 @@ nc = 3
 # 2. Desired direction (Left/right) of result
 # 3. Desired animation type
 # 4. Desired number of animation frames
-nz = (image_size**2)*nc + 3
+# Currently only supports 1, 3 and 4
+nz = (image_size**2)*nc + 2
 
 # Size of feature maps in generator
 ngf = 64

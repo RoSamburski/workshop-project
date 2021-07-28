@@ -91,18 +91,19 @@ class AnimationDataset(Dataset):
                 if self.transform:
                     animation[index] = self.transform(animation[index])
         assert reference is not None, "Missing reference for {}".format(char_path)
-        # indices = [i for i in range(len(animation))]
         if len(animation) > MAX_ANIMATION_LENGTH:
             # Handling of animations that are "too long" for us.
             indices = np.random.choice(len(animation), size=MAX_ANIMATION_LENGTH, replace=False)
             indices.sort()
             animation = [animation[i] for i in indices]
         else:
-            animation = [animation[i] for i in range(len(animation))]
+            # Pad by looping animation: Does not run into the 0-padding issue
+            animation = [animation[i%len(animation)] for i in range(MAX_ANIMATION_LENGTH)]
+            # animation = [animation[i] for i in range(len(animation))]
         padding = [torch.zeros(animation[0].shape) for i in range(MAX_ANIMATION_LENGTH - len(animation))]
         # TODO: Figure out why padding the tensor causes the channels to scramble
-        # item = torch.stack([reference] + animation + padding)
-        item = torch.stack([reference] + animation)
+        item = torch.stack([reference] + animation + padding, dim=0)
+        # item = torch.stack([reference] + animation)
         # item = torch.zeros((MAX_ANIMATION_LENGTH+1, 4, IMAGE_SIZE, IMAGE_SIZE))
         # item[0] = reference
         # for i in range(len(animation)):

@@ -76,7 +76,7 @@ class AnimationDataset(Dataset):
 
     def __getitem__(self, idx):
         char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx, 0]))
-        print("Fetching {}".format(char_path))
+        # print("Fetching {}".format(char_path))
         reference = None
         animation = {}
         for image in char_path.iterdir():
@@ -91,13 +91,22 @@ class AnimationDataset(Dataset):
                 if self.transform:
                     animation[index] = self.transform(animation[index])
         assert reference is not None, "Missing reference for {}".format(char_path)
-        indices = [i for i in range(len(animation))]
+        # indices = [i for i in range(len(animation))]
         if len(animation) > MAX_ANIMATION_LENGTH:
             # Handling of animations that are "too long" for us.
-            indices = np.random.choice(indices, replace=False).sort()
-        animation_array = [animation[i] for i in indices]
+            indices = np.random.choice(len(animation), size=MAX_ANIMATION_LENGTH, replace=False)
+            indices.sort()
+            animation = [animation[i] for i in indices]
+        else:
+            animation = [animation[i] for i in range(len(animation))]
         padding = [torch.zeros(animation[0].shape) for i in range(MAX_ANIMATION_LENGTH - len(animation))]
-        item = torch.stack([reference] + animation_array + padding)
+        # TODO: Figure out why padding the tensor causes the channels to scramble
+        # item = torch.stack([reference] + animation + padding)
+        item = torch.stack([reference] + animation)
+        # item = torch.zeros((MAX_ANIMATION_LENGTH+1, 4, IMAGE_SIZE, IMAGE_SIZE))
+        # item[0] = reference
+        # for i in range(len(animation)):
+        #     item[i+1] = animation[i]
         try:
             # Label format:
             # (Type, Animation-Length)
@@ -121,8 +130,11 @@ class AnimationDataset(Dataset):
         # print("{} {}".format(data_set[0], data_set[1]))
         return data_set
 
+    def fetch_by_name(self, name):
+        return self[self.full_dataset.index(name)]
 
-def verify(width_limit=80, height_limit=80):
+
+def verify(width_limit=IMAGE_SIZE, height_limit=IMAGE_SIZE):
     """
     Validates the database and prints any errors in it.
     Prints statistics
@@ -139,6 +151,9 @@ def verify(width_limit=80, height_limit=80):
             for frame in frames:
                 frame_tensor = read_image(os.path.join(DATASET_ROOT, folder.name, frame))
                 dimensions = list(frame_tensor.size())
+                if dimensions[0] < 4:
+                    # Image is not in RGBA
+                    print("{}\\{}: Erroneous color channels".format(folder.name, frame))
                 if dimensions[len(dimensions)-2] > max_height:
                     max_height = dimensions[len(dimensions)-2]
                     longest_image = folder.name + "/" + frame
@@ -172,6 +187,7 @@ def generate_label_file():
     :return: None
     """
     label_file = open(LABELS, "w")
+    label_file.write("Name, Tag\n")
     for folder in Path(DATASET_ROOT).iterdir():
         if folder.is_dir():
             name = folder.name
@@ -191,14 +207,33 @@ def test_data_fetching():
         T.ToPILImage(),
         np.array,
     ])
+    done = False
+    while not done:
+        test_type = input("Fetch Type:\n"
+                          "Specific\n"
+                          "Randomized\n"
+                          "Full\n")
+        if test_type[0].upper() == "S":
+            specific_image_fetch(dataset, to_image)
+            done = True
+        elif test_type[0].upper() == "R":
+            random_data_fetch(dataset, to_image)
+            done = True
+        elif test_type[0].upper() == "F":
+            full_fetch(dataset)
+            done = True
+        else:
+            print("Invalid command")
+
+
+def random_data_fetch(dataset, to_image):
     for i in range(10):
         fetch_image, fetch_label = dataset[np.random.randint(0, len(dataset))]
         print(fetch_label)
         print(fetch_image.shape)
         for j in range(0, len(fetch_image)):
             plt.subplot(5, 4, j+1)
-            # TODO: Figure out why Alpha channel does not work, or just drop it.
-            plt.imshow(to_image(fetch_image[j, [0, 1, 2]]))
+            plt.imshow(to_image(fetch_image[j]))
         # plt.subplot(2, 2, 1)
         # plt.imshow(to_image(fetch_image[0][0]))  # R
         # plt.subplot(2, 2, 2)
@@ -208,6 +243,37 @@ def test_data_fetching():
         # plt.subplot(2, 2, 4)
         # plt.imshow(to_image(fetch_image[0][3]))  # Alpha
         plt.show()
+
+
+def specific_image_fetch(dataset, to_image):
+    try:
+        index = int(input("Which image to fetch?\n"))
+    except TypeError:
+        print("Invalid Type")
+        return
+    fetch_image, fetch_label = dataset[index]
+    print(fetch_label)
+    for j in range(0, len(fetch_image)):
+        plt.subplot(5, 4, j + 1)
+        plt.imshow(to_image(fetch_image[j]))
+    # plt.subplot(2, 2, 1)
+    # plt.imshow(to_image(fetch_image[0][0]))  # B
+    # plt.subplot(2, 2, 2)
+    # plt.imshow(to_image(fetch_image[0][1]))  # R
+    # plt.subplot(2, 2, 3)
+    # plt.imshow(to_image(fetch_image[0][2]))  # G
+    # plt.subplot(2, 2, 4)
+    # plt.imshow(to_image(fetch_image[0][3]))  # Alpha
+    plt.show()
+
+
+def full_fetch(dataset):
+    for i in range(len(dataset)):
+        try:
+            fetch_image, fetch_label = dataset[i]
+        except Exception as e:
+            print("Error fetching #{}:\n{}".format(i, e))
+    print("done")
 
 
 def main():
@@ -225,6 +291,9 @@ def main():
                 verify(width_boundary, height_boundary)
             except TypeError:
                 print("Please provide numbers")
+            except IndexError:
+                print("Not enough values provided. Proceeding with default.")
+                verify()
         elif action.upper() == "GENERATE":
             label_file = Path(LABELS)
             if label_file.exists():

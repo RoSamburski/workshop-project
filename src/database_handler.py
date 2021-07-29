@@ -21,6 +21,11 @@ MAX_ANIMATION_LENGTH = 16
 
 IMAGE_SIZE = 80
 
+IMAGE_TRANSFORM = T.Compose([
+        T.ToPILImage(),
+        np.array,
+    ])
+
 
 class AnimationType(Enum):
     """ Enums for value representation """
@@ -98,16 +103,12 @@ class AnimationDataset(Dataset):
             animation = [animation[i] for i in indices]
         else:
             # Pad by looping animation: Does not run into the 0-padding issue
-            animation = [animation[i%len(animation)] for i in range(MAX_ANIMATION_LENGTH)]
-            # animation = [animation[i] for i in range(len(animation))]
-        padding = [torch.zeros(animation[0].shape) for i in range(MAX_ANIMATION_LENGTH - len(animation))]
-        # TODO: Figure out why padding the tensor causes the channels to scramble
-        item = torch.stack([reference] + animation + padding, dim=0)
+            # animation = [animation[i % len(animation)] for i in range(MAX_ANIMATION_LENGTH)]
+            animation = [animation[i] for i in range(len(animation))]
+        padding = [torch.zeros((4, IMAGE_SIZE, IMAGE_SIZE), dtype=torch.uint8)
+                   for i in range(MAX_ANIMATION_LENGTH - len(animation))]
+        item = torch.stack([reference] + animation + padding)
         # item = torch.stack([reference] + animation)
-        # item = torch.zeros((MAX_ANIMATION_LENGTH+1, 4, IMAGE_SIZE, IMAGE_SIZE))
-        # item[0] = reference
-        # for i in range(len(animation)):
-        #     item[i+1] = animation[i]
         try:
             # Label format:
             # (Type, Animation-Length)
@@ -204,10 +205,6 @@ def test_data_fetching():
                                    # T.Pad(IMAGE_SIZE),
                                    T.CenterCrop(IMAGE_SIZE)
                                ]))
-    to_image = T.Compose([
-        T.ToPILImage(),
-        np.array,
-    ])
     done = False
     while not done:
         test_type = input("Fetch Type:\n"
@@ -215,10 +212,10 @@ def test_data_fetching():
                           "Randomized\n"
                           "Full\n")
         if test_type[0].upper() == "S":
-            specific_image_fetch(dataset, to_image)
+            specific_image_fetch(dataset)
             done = True
         elif test_type[0].upper() == "R":
-            random_data_fetch(dataset, to_image)
+            random_data_fetch(dataset)
             done = True
         elif test_type[0].upper() == "F":
             full_fetch(dataset)
@@ -227,26 +224,26 @@ def test_data_fetching():
             print("Invalid command")
 
 
-def random_data_fetch(dataset, to_image):
+def random_data_fetch(dataset):
     for i in range(10):
         fetch_image, fetch_label = dataset[np.random.randint(0, len(dataset))]
         print(fetch_label)
         print(fetch_image.shape)
         for j in range(0, len(fetch_image)):
             plt.subplot(5, 4, j+1)
-            plt.imshow(to_image(fetch_image[j]))
+            plt.imshow(IMAGE_TRANSFORM(fetch_image[j]))
         # plt.subplot(2, 2, 1)
-        # plt.imshow(to_image(fetch_image[0][0]))  # R
+        # plt.imshow(IMAGE_TRANSFORM(fetch_image[0][0]))  # R
         # plt.subplot(2, 2, 2)
-        # plt.imshow(to_image(fetch_image[0][1]))  # G
+        # plt.imshow(IMAGE_TRANSFORM(fetch_image[0][1]))  # G
         # plt.subplot(2, 2, 3)
-        # plt.imshow(to_image(fetch_image[0][2]))  # B
+        # plt.imshow(IMAGE_TRANSFORM(fetch_image[0][2]))  # B
         # plt.subplot(2, 2, 4)
-        # plt.imshow(to_image(fetch_image[0][3]))  # Alpha
+        # plt.imshow(IMAGE_TRANSFORM(fetch_image[0][3]))  # Alpha
         plt.show()
 
 
-def specific_image_fetch(dataset, to_image):
+def specific_image_fetch(dataset):
     try:
         index = int(input("Which image to fetch?\n"))
     except TypeError:
@@ -255,16 +252,16 @@ def specific_image_fetch(dataset, to_image):
     fetch_image, fetch_label = dataset[index]
     print(fetch_label)
     for j in range(0, len(fetch_image)):
-        plt.subplot(5, 4, j + 1)
-        plt.imshow(to_image(fetch_image[j]))
-    # plt.subplot(2, 2, 1)
-    # plt.imshow(to_image(fetch_image[0][0]))  # B
-    # plt.subplot(2, 2, 2)
-    # plt.imshow(to_image(fetch_image[0][1]))  # R
-    # plt.subplot(2, 2, 3)
-    # plt.imshow(to_image(fetch_image[0][2]))  # G
-    # plt.subplot(2, 2, 4)
-    # plt.imshow(to_image(fetch_image[0][3]))  # Alpha
+        plt.subplot(5, 4, j+1)
+        plt.imshow(IMAGE_TRANSFORM(fetch_image[j]))
+        # plt.subplot(4, 2, 1)
+        # plt.imshow(IMAGE_TRANSFORM(fetch_image[j][0]))  # B
+        # plt.subplot(4, 2, 2)
+        # plt.imshow(IMAGE_TRANSFORM(fetch_image[j][1]))  # R
+        # plt.subplot(4, 2, 3)
+        # plt.imshow(IMAGE_TRANSFORM(fetch_image[j][2]))  # G
+        # plt.subplot(4, 2, 4)
+        # plt.imshow(IMAGE_TRANSFORM(fetch_image[j][3]))  # Alpha
     plt.show()
 
 

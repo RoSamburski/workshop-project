@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 from torchvision.io import read_image
 import torchvision.utils as vutils
 import numpy as np
@@ -91,8 +91,8 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.main = nn.Sequential(
-            # input is Z, going into a convolution
-            nn.ConvTranspose2d(nz, ngf * 8 * max_animation_length, (4,), (1,), (0,), bias=False),
+            # input is reference+animation metadata, going into a convolution
+            nn.ConvTranspose2d(image_size**2 + 2, ngf * 8 * max_animation_length, (4,), (1,), (0,), bias=False),
             nn.BatchNorm2d(ngf * 8 * max_animation_length),
             nn.ReLU(True),
             # state size. (ngf*8) x 4 x 4 x (mal)
@@ -192,17 +192,23 @@ def model_init():
     return G, D
 
 
-def dataloader_init():
-    dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels,
-                                                transform=torchvision.transforms.CenterCrop(image_size),
-                                                )
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    return dataloader
+def generator_input_transform(reference: torch.Tensor, animation_type: database_handler.AnimationType, frame_count: int)\
+        -> torch.Tensor:
+    assert 1 <= frame_count <= max_animation_length
+    return torch.cat([torch.flatten(reference),
+                      torch.Tensor(animation_type.value),
+                      torch.Tensor(frame_count)])
 
 
 def single_class_training():
     # INIT STEP:
-    dataloader = dataloader_init()
+    dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels,
+                                                transform=torchvision.transforms.CenterCrop(image_size),
+                                                )
+    # To provide the generator with enough power,
+    # we limit the discriminator to only learning from 90% of the database.
+    discriminator_data = np.random.choice(len(dataset), size=9*len(dataset)//10, replace=False)
+    dataloader = torch.utils.data.DataLoader(Subset(dataset, discriminator_data), batch_size=batch_size, shuffle=True)
     # Create models and initialize loss function
     G, D = model_init()
     loss_func = nn.BCELoss()
@@ -214,7 +220,9 @@ def single_class_training():
 
     # Things we keep track of to see progress
     img_examples = []
-    example_reference = None  # TODO
+    example_reference = dataset[np.random.randint(0, len(dataset))][0][0]  # TODO
+    plt.imshow(database_handler.IMAGE_TRANSFORM(example_reference))
+    plt.plot()
     G_losses = []
     D_losses = []
     iters = 0
@@ -243,11 +251,15 @@ def single_class_training():
             D_x = output.mean().item()
 
             # Train with all-fake batch #
-            # Generate batch of latent vectors
-            # TODO: Set up random input
-            noise = torch.randn(b_size, nz, 1, 1, device=device)
+            # Take a random sample of reference images
+            generator_input = [generator_input_transform(dataset[np.random.randint(0, len(dataset))][0][0],
+                                                         np.random.choice(list(database_handler.AnimationType)),
+                                                         np.random.randint(1, max_animation_length),
+                                                         )
+                               for i in range(b_size)]
+            generator_input = torch.stack(generator_input)
             # Generate fake image batch with G
-            fake = G(noise)
+            fake = G(generator_input)
             label.fill_(fake_label)
             # Classify all fake batch with D
             output = D(fake.detach()).view(-1)
@@ -290,7 +302,8 @@ def single_class_training():
             if (iters % 500 == 0) or ((epoch == num_epochs - 1) and (i == len(dataloader) - 1)):
                 with torch.no_grad():
                     fake = G(example_reference).detach().cpu()
-                img_examples.append(vutils.make_grid(fake, padding=2, normalize=True))
+                img_examples.append([vutils.make_grid(database_handler.IMAGE_TRANSFORM(fake_frame),
+                                                      padding=2, normalize=True) for fake_frame in fake])
 
             iters += 1
 

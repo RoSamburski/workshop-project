@@ -92,23 +92,23 @@ class Generator(nn.Module):
         self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is reference+animation metadata, going into a convolution
-            nn.ConvTranspose2d(image_size**2 + 2, ngf * 8 * max_animation_length, (4,), (1,), (0,), bias=False),
+            nn.ConvTranspose2d(image_size**2 + 2, ngf * 8 * max_animation_length, 4, 1, 0, bias=False),
             nn.BatchNorm2d(ngf * 8 * max_animation_length),
             nn.ReLU(True),
             # state size. (ngf*8) x 4 x 4 x (mal)
-            nn.ConvTranspose2d(ngf * 8 * max_animation_length, ngf * 4 * max_animation_length, (4,), (2,), (1,), bias=False),
+            nn.ConvTranspose2d(ngf * 8 * max_animation_length, ngf * 4 * max_animation_length, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * 4 * max_animation_length),
             nn.ReLU(True),
             # state size. (ngf*4) x 8 x 8 x (mal)
-            nn.ConvTranspose2d(ngf * 4 * max_animation_length, ngf * 2 * max_animation_length, (4,), (2,), (1,), bias=False),
+            nn.ConvTranspose2d(ngf * 4 * max_animation_length, ngf * 2 * max_animation_length, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * 2 * max_animation_length),
             nn.ReLU(True),
             # state size. (ngf*2) x 16 x 16 x (mal)
-            nn.ConvTranspose2d(ngf * 2, ngf, (4,), (2,), (1,), bias=False),
+            nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * max_animation_length),
             nn.ReLU(True),
             # state size. (ngf) x 32 x 32 x (mal)
-            nn.ConvTranspose2d(ngf * max_animation_length, nc*max_animation_length, (4,), (2,), (1,), bias=False),
+            nn.ConvTranspose2d(ngf * max_animation_length, nc*max_animation_length, 4, 2, 1, bias=False),
             nn.Tanh()
             # state size. (nc) x 64 x 64 x (mal)
         )
@@ -125,22 +125,22 @@ class Discriminator(nn.Module):
         self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is (nc) x 64 x 64 x (mal + 1 (reference)) + 2 (params)
-            nn.Conv2d(nc * (max_animation_length+1) + 2, ndf, (4,), (2,), (1,), bias=False),
+            nn.Conv2d(nc * (max_animation_length+1) + 2, ndf, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf) x 32 x 32
-            nn.Conv2d(ndf, ndf * 2, (4,), (2,), (1,), bias=False),
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*2) x 16 x 16
-            nn.Conv2d(ndf * 2, ndf * 4, (4,), (2,), (1,), bias=False),
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*4) x 8 x 8
-            nn.Conv2d(ndf * 4, ndf * 8, (4,), (2,), (1,), bias=False),
+            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 8),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*8) x 4 x 4
-            nn.Conv2d(ndf * 8, 1, (4,), (1,), (0,), bias=False),
+            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False),
             nn.Sigmoid()
         )
 
@@ -154,27 +154,27 @@ class MulticlassDiscriminator(nn.Module):
         self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is (nc) x 64 x 64 x (mal+1)
-            nn.Conv2d(nc * (max_animation_length + 1), ndf, (4,), (2,), (1,), bias=False),
+            nn.Conv2d(nc * (max_animation_length + 1), ndf, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
             # Drop-out for classification
             nn.Dropout(p=dropout),
             # state size. (ndf) x 32 x 32
-            nn.Conv2d(ndf, ndf * 2, (4,), (2,), (1,), bias=False),
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout(p=dropout),
             # state size. (ndf*2) x 16 x 16
-            nn.Conv2d(ndf * 2, ndf * 4, (4,), (2,), (1,), bias=False),
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout(p=dropout),
             # state size. (ndf*4) x 8 x 8
-            nn.Conv2d(ndf * 4, ndf * 8, (4,), (2,), (1,), bias=False),
+            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 8),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout(p=dropout),
             # state size. (ndf*8) x 4 x 4
-            nn.Conv2d(ndf * 8, 1, (4,), (1,), (0,), bias=False),
+            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False),
             # TODO
             # We use semi-supervised learning, so we will utilise softmax
             nn.Softmax(),
@@ -220,9 +220,9 @@ def single_class_training():
 
     # Things we keep track of to see progress
     img_examples = []
-    example_reference = dataset[np.random.randint(0, len(dataset))][0][0]  # TODO
+    example_reference = dataset[np.random.randint(0, len(dataset))][0]  # TODO
     plt.imshow(database_handler.IMAGE_TRANSFORM(example_reference))
-    plt.plot()
+    plt.show()
     G_losses = []
     D_losses = []
     iters = 0
@@ -252,7 +252,7 @@ def single_class_training():
 
             # Train with all-fake batch #
             # Take a random sample of reference images
-            generator_input = [generator_input_transform(dataset[np.random.randint(0, len(dataset))][0][0],
+            generator_input = [generator_input_transform(dataset[np.random.randint(0, len(dataset))][0],
                                                          np.random.choice(list(database_handler.AnimationType)),
                                                          np.random.randint(1, max_animation_length),
                                                          )

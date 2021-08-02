@@ -108,7 +108,7 @@ class AnimationDataset(Dataset):
         padding = [torch.zeros((4, IMAGE_SIZE, IMAGE_SIZE), dtype=torch.uint8)
                    for i in range(MAX_ANIMATION_LENGTH - len(animation))]
         item = torch.stack([reference] + animation + padding)
-        # item = torch.stack([reference] + animation)
+        return item
         try:
             # Label format:
             # (Type, Animation-Length)

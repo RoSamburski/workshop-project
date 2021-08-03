@@ -18,3 +18,5 @@ Project Usage (currently):
 1. Run train.py
 2. Run generate.py on train.py's output and the desired sprite.
 
+NOTES:
+Training requires about 5.7-6 GB RAM to run

@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 import pandas as pd
 from torchvision.io import read_image
 import matplotlib.pyplot as plt
+from PIL import Image
 
 """Dataset Constants"""
 DATASET_ROOT = "data"
@@ -87,14 +88,14 @@ class AnimationDataset(Dataset):
         for image in char_path.iterdir():
             if "REF" in image.name.upper():
                 # Reference image
-                reference = read_image(str(image))
-                if self.transform:
-                    reference = self.transform(reference)
+                reference = Image.open(str(image))
+                # if self.transform:
+                #     reference = self.transform(reference)
             else:
                 index = int(image.name.split(".")[0])
-                animation[index] = read_image(str(image))
-                if self.transform:
-                    animation[index] = self.transform(animation[index])
+                animation[index] = Image.open(str(image))
+                # if self.transform:
+                #     animation[index] = self.transform(animation[index])
         assert reference is not None, "Missing reference for {}".format(char_path)
         if len(animation) > MAX_ANIMATION_LENGTH:
             # Handling of animations that are "too long" for us.
@@ -105,10 +106,12 @@ class AnimationDataset(Dataset):
             # Pad by looping animation: Does not run into the 0-padding issue
             # animation = [animation[i % len(animation)] for i in range(MAX_ANIMATION_LENGTH)]
             animation = [animation[i] for i in range(len(animation))]
-        padding = [torch.zeros((4, IMAGE_SIZE, IMAGE_SIZE), dtype=torch.uint8)
+        padding = [np.zeros((4, IMAGE_SIZE, IMAGE_SIZE), dtype=float)
                    for i in range(MAX_ANIMATION_LENGTH - len(animation))]
-        item = torch.stack([reference] + animation + padding)
-        return item
+        # item = torch.stack([reference] + animation + padding)
+        item = [reference] + animation
+        if self.transform:
+            item = self.transform(item)
         try:
             # Label format:
             # (Type, Animation-Length)
@@ -131,6 +134,9 @@ class AnimationDataset(Dataset):
                 data_set.append(folder.name)
         # print("{} {}".format(data_set[0], data_set[1]))
         return data_set
+
+    def get_reference_frame(self, idx):
+        return self[idx][0][0]
 
     def fetch_by_name(self, name):
         return self[self.full_dataset.index(name)]

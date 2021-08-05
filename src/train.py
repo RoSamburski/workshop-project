@@ -32,7 +32,7 @@ image_size = database_handler.IMAGE_SIZE
 # maximum number of animation frames. We may generate less but never more.
 max_animation_length = database_handler.MAX_ANIMATION_LENGTH
 
-batch_size = 16
+batch_size = 20
 
 # number of color channels in images. We use RGBA images so 4
 # We will actually do color reduction later as every image will use its' own palette.
@@ -53,10 +53,10 @@ nz = (image_size**2)*nc + 2
 ngf = 64
 
 # Size of feature maps in discriminator
-ndf = 64
+ndf = 16
 
 # Number of training epochs
-num_epochs = 5
+num_epochs = 10
 
 # Learning rate for optimizers
 lr = 0.0002
@@ -260,11 +260,12 @@ def single_class_training():
     # INIT STEP:
     dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels,
                                                 transform=dataset_transform,
-                                                target_transform=lambda x: (float(x[0].value), float(x[1]))
+                                                target_transform=lambda x: (float(x[0].value), float(x[1])),
+                                                use_palette_swap=True,
                                                 )
     # To provide the generator with enough power,
-    # we limit the discriminator to only learning from 90% of the database.
-    discriminator_data = np.random.choice(len(dataset), size=9*len(dataset)//10, replace=False)
+    # we limit the discriminator to only learning from 75% of the database.
+    discriminator_data = np.random.choice(len(dataset), size=3*len(dataset)//4, replace=False)
     dataloader = torch.utils.data.DataLoader(Subset(dataset, discriminator_data), batch_size=batch_size, shuffle=True)
     # Create models and initialize loss function
     G, D = model_init()
@@ -364,9 +365,8 @@ def single_class_training():
             # Check how the generator is doing by saving G's output on fixed_noise
             if (iters % 500 == 0) or ((epoch == num_epochs - 1) and (i == len(dataloader) - 1)):
                 with torch.no_grad():
-                    fake = G(example_reference).detach().cpu()
-                img_examples.append([vutils.make_grid(fake_frame[0],
-                                                      padding=2, normalize=True) for fake_frame in fake])
+                    fake = G(example_reference).detach().cpu()[0]
+                img_examples.append([database_handler.IMAGE_TRANSFORM(fake_frame) for fake_frame in fake])
 
             iters += 1
 
@@ -379,6 +379,12 @@ def single_class_training():
     plt.ylabel("Loss")
     plt.legend()
     plt.show()
+    for i in range(len(img_examples)):
+        for j in range(max_animation_length+1):
+            plt.subplot(4, 5, j+1)
+            plt.axis("off")
+            plt.imshow(img_examples[i][j])
+        plt.show()
 
 
 def main():

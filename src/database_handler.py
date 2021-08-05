@@ -70,18 +70,34 @@ class AnimationDataset(Dataset):
     2. Animation frames (titled as numbers by order: 0.png to <MAL-1>.png)
     The labeling file contains the folder names, followed by the metadata of the animation (direction+type)
     """
-    def __init__(self, labeling_file, root_dir, transform=None, target_transform=None):
+    def __init__(self, labeling_file, root_dir, transform=None, target_transform=None, use_palette_swap=False):
         self.label_set = pd.read_csv(labeling_file)
         self.root_dir = root_dir
         self.full_dataset = self.build_dataset()
         self.transform = transform
         self.target_transform = target_transform
+        # Whether to allow shuffling of RGB channels.
+        # Shuffling multiplies the usable dataset size by 6
+        self.use_palette_swap = use_palette_swap
+        self.palette_permutations = [
+            (0, 1, 2),
+            (0, 2, 1),
+            (1, 0, 2),
+            (1, 2, 0),
+            (2, 0, 1),
+            (2, 1, 0),
+        ]
 
     def __len__(self):
+        if self.use_palette_swap:
+            return 6*len(self.label_set)
         return len(self.label_set)
 
     def __getitem__(self, idx):
-        char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx, 0]))
+        if self.use_palette_swap:
+            char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx//6, 0]))
+        else:
+            char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx, 0]))
         # print("Fetching {}".format(char_path))
         reference = None
         animation = {}
@@ -103,21 +119,32 @@ class AnimationDataset(Dataset):
             indices.sort()
             animation = [animation[i] for i in indices]
         else:
-            # Pad by looping animation: Does not run into the 0-padding issue
-            # animation = [animation[i % len(animation)] for i in range(MAX_ANIMATION_LENGTH)]
             animation = [animation[i] for i in range(len(animation))]
-        padding = [np.zeros((4, IMAGE_SIZE, IMAGE_SIZE), dtype=float)
-                   for i in range(MAX_ANIMATION_LENGTH - len(animation))]
-        # item = torch.stack([reference] + animation + padding)
         item = [reference] + animation
+        if self.use_palette_swap:
+            tmp = []
+            for frame in item:
+                channels = frame.split()
+                permutation = self.palette_permutations[idx % 6]
+                # Reorder the RGB channels. leave Alpha channel at place
+                out_channels = (channels[permutation[0]],
+                                channels[permutation[1]],
+                                channels[permutation[2]],
+                                channels[3])
+                tmp.append(Image.merge(mode="RGBA", bands=out_channels))
+            item = tmp
         if self.transform:
             item = self.transform(item)
         try:
             # Label format:
             # (Type, Animation-Length)
             # Currently ignores direction
-            label = (AnimationType.parse_string(self.label_set.iloc[idx, 1]),
+            if self.use_palette_swap:
+                label = (AnimationType.parse_string(self.label_set.iloc[idx//6, 1]),
                      min(len(animation), MAX_ANIMATION_LENGTH))
+            else:
+                label = (AnimationType.parse_string(self.label_set.iloc[idx, 1]),
+                         min(len(animation), MAX_ANIMATION_LENGTH))
             if self.target_transform:
                 label = self.target_transform(label)
         except IndexError:
@@ -207,10 +234,7 @@ def generate_label_file():
 
 def test_data_fetching():
     dataset = AnimationDataset(labeling_file=LABELS, root_dir=DATASET_ROOT,
-                               transform=T.Compose([
-                                   # T.Pad(IMAGE_SIZE),
-                                   T.CenterCrop(IMAGE_SIZE)
-                               ]))
+                               use_palette_swap=True)
     done = False
     while not done:
         test_type = input("Fetch Type:\n"
@@ -259,7 +283,7 @@ def specific_image_fetch(dataset):
     print(fetch_label)
     for j in range(0, len(fetch_image)):
         plt.subplot(5, 4, j+1)
-        plt.imshow(IMAGE_TRANSFORM(fetch_image[j]))
+        plt.imshow(fetch_image[j])
         # plt.subplot(4, 2, 1)
         # plt.imshow(IMAGE_TRANSFORM(fetch_image[j][0]))  # B
         # plt.subplot(4, 2, 2)
@@ -272,12 +296,14 @@ def specific_image_fetch(dataset):
 
 
 def full_fetch(dataset):
+    count = 0
     for i in range(len(dataset)):
         try:
             fetch_image, fetch_label = dataset[i]
+            count += 1
         except Exception as e:
             print("Error fetching #{}:\n{}".format(i, e))
-    print("done")
+    print("done (fetched {}/{} successfully)".format(count, len(dataset)))
 
 
 def main():

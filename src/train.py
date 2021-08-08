@@ -26,6 +26,8 @@ generator_inputs = database_handler.GENERATOR_INPUT
 
 labels = database_handler.LABELS
 
+model_folder = "models"
+
 # Size of images
 image_size = database_handler.IMAGE_SIZE
 
@@ -413,6 +415,11 @@ def single_class_training():
             plt.axis("off")
             plt.imshow(img_examples[i][j])
         plt.show()
+    save_model = input("Save model? (Y/N)\n")
+    if save_model.upper() == "Y":
+        name = input("Save as: ")
+        torch.save({"generator:": G.state_dict(), "discriminator": D.state_dict()},
+                   os.path.join(model_folder, name + ".pt"))
 
 
 def main():

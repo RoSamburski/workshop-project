@@ -34,7 +34,7 @@ image_size = database_handler.IMAGE_SIZE
 # maximum number of animation frames. We may generate less but never more.
 max_animation_length = database_handler.MAX_ANIMATION_LENGTH
 
-batch_size = 20
+batch_size = 5
 
 # number of color channels in images. We use RGBA images so 4
 # We will actually do color reduction later as every image will use its' own palette.
@@ -58,10 +58,10 @@ embed_dim = 100
 ngf = 64
 
 # Size of feature maps in discriminator
-ndf = 16
+ndf = 64
 
 # Number of training epochs
-num_epochs = 10
+num_epochs = 5  # TODO: Try increasing the epoch num when running on Nadav's computer
 
 # Learning rate for optimizers
 lr = 0.0002
@@ -101,10 +101,9 @@ class Generator(nn.Module):
             nn.Linear(embed_dim, nc * (image_size ** 2))
         )
         self.model = nn.Sequential(
-            # TODO: Make sure dimesions of i/o are okay
             # input is reference + encoded label, going into a convolution
             # kernel, stride, padding were chosen to not change 2nd to 4th dimension
-            nn.ConvTranspose3d(2, ngf * 8,
+            nn.ConvTranspose3d(3, ngf * 8,
                                kernel_size=(3, 3, 3),
                                stride=(1, 1, 1),
                                padding=(1, 1, 1),
@@ -147,11 +146,11 @@ class Generator(nn.Module):
 
     def forward(self, input):
         image, label = input
-        label = self.label_transform(label).view(-1, 1, nc, image_size, image_size)
+        label = self.label_transform(label).view(-1, 2, nc, image_size, image_size)
         labeled_input = torch.cat((image, label), dim=1)
         out = self.model(labeled_input)
         # We want to force the generator to match the image to the given reference image
-        return torch.cat((image, out))
+        return torch.cat((image, out), dim=1)
 
 
 # Discriminator class, for single-class discrimination (real/fake)
@@ -166,11 +165,10 @@ class Discriminator(nn.Module):
             nn.Linear(embed_dim, (max_animation_length + 1) * nc * (image_size ** 2))
         )
         self.model = nn.Sequential(
-            # TODO: Verify Dimensions
             # input dimensions are (2*(mal+1), nc, image_size, image_size)
             # The first dimension is "doubled" because of the label
             # Following are calculations for nc=4, image_size=80:
-            nn.Conv3d(2 * (max_animation_length + 1), ndf,
+            nn.Conv3d(3 * (max_animation_length + 1), ndf,
                       kernel_size=(4, 4, 4),
                       stride=(2, 2, 2),
                       padding=(1, 1, 1),
@@ -211,7 +209,7 @@ class Discriminator(nn.Module):
 
     def forward(self, input):
         image, label = input
-        label = self.label_transform(label).view(-1, max_animation_length + 1, nc, image_size, image_size)
+        label = self.label_transform(label).view(-1, 2*(max_animation_length + 1), nc, image_size, image_size)
         labeled_input = torch.cat((image, label), dim=1)
         return self.model(labeled_input)
 
@@ -283,7 +281,8 @@ def single_class_training():
     # INIT STEP:
     dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels,
                                                 transform=dataset_transform,
-                                                target_transform=lambda x: torch.Tensor([float(x[0].value), float(x[1])]),
+                                                target_transform=lambda x: torch.IntTensor([int(x[0].value),
+                                                                                            int(x[1])]),
                                                 use_palette_swap=True,
                                                 )
     # To provide the generator with enough power,
@@ -302,11 +301,17 @@ def single_class_training():
     # Things we keep track of to see progress
     img_examples = []
     example_animation, _ = dataset[np.random.randint(0, len(dataset))]  # TODO
-    plt.imshow(database_handler.IMAGE_TRANSFORM(example_animation[0]))
     example_reference = torch.zeros((1, 1, nc, image_size, image_size))
     example_reference[0, 0] = example_animation[0]
     example_reference = example_reference.to(device)
+    example_tags = [np.random.choice(database_handler.AnimationType),
+                    np.random.randint(1, max_animation_length)]
+
+    # Display the example image and parameters
+    plt.imshow(database_handler.IMAGE_TRANSFORM(example_animation[0]))
+    plt.title("Animation type: {}\nFrames: {}".format(example_tags[0].name, example_tags[1]))
     plt.show()
+    example_tags = torch.IntTensor([example_tags[0].value, example_tags[1]]).to(device)
     G_losses = []
     D_losses = []
     iters = 0
@@ -328,7 +333,7 @@ def single_class_training():
             b_size = real_cpu.size(0)
             label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
             # Forward pass real batch through D
-            output = D(real_cpu, real_cpu_labels).view(-1)
+            output = D((real_cpu, real_cpu_labels)).view(-1)
             # Calculate loss on all-real batch
             errD_real = loss_func(output, label)
             # Calculate gradients for D in backward pass
@@ -347,16 +352,16 @@ def single_class_training():
             generator_input = torch.stack(generator_input).to(device)
             assert tuple(generator_input.shape) == (b_size, 1, nc, image_size, image_size)
 
-            generator_input_labels = torch.Tensor([
+            generator_input_labels = torch.IntTensor([
                 [np.random.choice(list(database_handler.AnimationType)).value,
                  np.random.randint(1, max_animation_length)]
                 for _ in range(b_size)
             ]).to(device)
             # Generate fake image batch with G
-            fake = G(generator_input, generator_input_labels)
+            fake = G((generator_input, generator_input_labels))
             label.fill_(fake_label)
             # Classify all fake batch with D
-            output = D(fake.detach(), generator_input_labels).view(-1)
+            output = D((fake.detach(), generator_input_labels)).view(-1)
             # Calculate D's loss on the all-fake batch
             errD_fake = loss_func(output, label)
             # Calculate the gradients for this batch, accumulated (summed) with previous gradients
@@ -373,7 +378,7 @@ def single_class_training():
             G.zero_grad()
             label.fill_(real_label)  # fake labels are real for generator cost
             # Since we just updated D, perform another forward pass of all-fake batch through D
-            output = D(fake).view(-1)
+            output = D((fake.detach(), generator_input_labels)).view(-1)
             # Calculate G's loss based on this output
             errG = loss_func(output, label)
             # Calculate gradients for G
@@ -395,7 +400,7 @@ def single_class_training():
             # Check how the generator is doing by saving G's output on fixed_noise
             if (iters % 500 == 0) or ((epoch == num_epochs - 1) and (i == len(dataloader) - 1)):
                 with torch.no_grad():
-                    fake = G(example_reference).detach().cpu()[0]
+                    fake = G((example_reference, example_tags)).detach().cpu()[0]
                 img_examples.append([database_handler.IMAGE_TRANSFORM(fake_frame) for fake_frame in fake])
 
             iters += 1
@@ -409,12 +414,18 @@ def single_class_training():
     plt.ylabel("Loss")
     plt.legend()
     plt.show()
-    for i in range(len(img_examples)):
-        for j in range(max_animation_length + 1):
-            plt.subplot(4, 5, j + 1)
-            plt.axis("off")
-            plt.imshow(img_examples[i][j])
-        plt.show()
+    # for i in range(len(img_examples)):
+    #     for j in range(max_animation_length + 1):
+    #         plt.subplot(4, 5, j + 1)
+    #         plt.axis("off")
+    #         plt.imshow(img_examples[i][j])
+    #     plt.show()
+    # Show final result
+    for j in range(max_animation_length + 1):
+        plt.subplot(4, 5, j + 1)
+        plt.axis("off")
+        plt.imshow(img_examples[-1][j])
+    plt.show()
     save_model = input("Save model? (Y/N)\n")
     if save_model.upper() == "Y":
         name = input("Save as: ")

@@ -10,6 +10,7 @@ from torchvision.io import read_image
 import torchvision.utils as vutils
 import numpy as np
 from pathlib import Path
+import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import database_handler
@@ -34,34 +35,35 @@ image_size = database_handler.IMAGE_SIZE
 # maximum number of animation frames. We may generate less but never more.
 max_animation_length = database_handler.MAX_ANIMATION_LENGTH
 
-batch_size = 5
+batch_size = 16
 
 # number of color channels in images. We use RGBA images so 4
 # We will actually do color reduction later as every image will use its' own palette.
 nc = 4
 
-# Size of input to generator.
+# Size of input to noise-based generator.
 # Since we wish to generate outputs based on existing inputs ("animate them"), and not generate new animations
-# out of nothing, we will use meaningful inputs as opposed to randomized inputs.
+# out of nothing, we want use meaningful inputs as opposed to randomized inputs.
+# However, this doesn't give the generator nearly enough power.
 # Input consists of:
 # 1. A sample image ("Reference"),
 # 2. Desired direction (Left/right) of result
 # 3. Desired animation type
 # 4. Desired number of animation frames
 # Currently only supports 1, 3 and 4
-nz = (image_size ** 2) * nc + 2
+nz = 100
 
 # Size of label embedding dimension
 embed_dim = 100
 
 # Size of feature maps in generator
-ngf = 64
+ngf = 32
 
 # Size of feature maps in discriminator
-ndf = 64
+ndf = 32
 
 # Number of training epochs
-num_epochs = 5  # TODO: Try increasing the epoch num when running on Nadav's computer
+num_epochs = 500  # TODO: Try increasing the epoch num when running on Nadav's computer
 
 # Learning rate for optimizers
 lr = 0.0002
@@ -141,7 +143,7 @@ class Generator(nn.Module):
                                padding=(1, 1, 1),
                                bias=False),
             nn.Tanh()
-            # state size. (mal+1, nc, image_size, image_size)
+            # state size. (mal, nc, image_size, image_size)
         )
 
     def forward(self, input):
@@ -151,6 +153,67 @@ class Generator(nn.Module):
         out = self.model(labeled_input)
         # We want to force the generator to match the image to the given reference image
         return torch.cat((image, out), dim=1)
+
+
+# A generator that makes entire animations from noise
+class NoiseGenerator(nn.Module):
+    def __init__(self, ngpu):
+        super(NoiseGenerator, self).__init__()
+        self.ngpu = ngpu
+        self.label_transform = nn.Sequential(
+            nn.Embedding(len(database_handler.AnimationType) * max_animation_length, embed_dim),
+            nn.Linear(embed_dim, nz)
+        )
+        self.model = nn.Sequential(
+            # input is noise + encoded label, going into a convolution
+            nn.ConvTranspose3d(3 * nz, ngf * 8,
+                               kernel_size=(2, 5, 5),
+                               stride=(1, 1, 1),
+                               padding=(0, 0, 0),
+                               bias=False),
+            nn.BatchNorm3d(ngf * 8),
+            nn.ReLU(True),
+            # state size. (8*ngf, 2, 5, 5)
+            nn.ConvTranspose3d(ngf * 8, ngf * 4,
+                               kernel_size=(2, 4, 4),
+                               stride=(2, 2, 2),
+                               padding=(1, 1, 1),
+                               bias=False),
+            nn.BatchNorm3d(ngf * 4),
+            nn.ReLU(True),
+            # state size. (4*ngf, 2, 10, 10)
+            nn.ConvTranspose3d(ngf * 4, ngf * 2,
+                               kernel_size=(2, 4, 4),
+                               stride=(2, 2, 2),
+                               padding=(1, 1, 1),
+                               bias=False),
+            nn.BatchNorm3d(ngf * 2),
+            nn.ReLU(True),
+            # state size. (2*ngf, 2, 20, 20)
+            nn.ConvTranspose3d(ngf * 2, ngf,
+                               kernel_size=(2, 4, 4),
+                               stride=(2, 2, 2),
+                               padding=(1, 1, 1),
+                               bias=False),
+            nn.BatchNorm3d(ngf),
+            nn.ReLU(True),
+            # state size. (ngf, 2, 40, 40)
+            nn.ConvTranspose3d(ngf, max_animation_length + 1,
+                               kernel_size=(4, 4, 4),
+                               stride=(2, 2, 2),
+                               padding=(1, 1, 1),
+                               bias=False),
+            nn.Tanh()
+            # state size. (mal+1, 4, 80, 80)
+        )
+
+    def forward(self, input):
+        noise, label = input
+        label = self.label_transform(label).view(-1, 2 * nz, 1, 1, 1)
+        labeled_input = torch.cat((noise, label), dim=1)
+        out = self.model(labeled_input)
+        # We want to force the generator to match the image to the given reference image
+        return out
 
 
 # Discriminator class, for single-class discrimination (real/fake)
@@ -209,7 +272,7 @@ class Discriminator(nn.Module):
 
     def forward(self, input):
         image, label = input
-        label = self.label_transform(label).view(-1, 2*(max_animation_length + 1), nc, image_size, image_size)
+        label = self.label_transform(label).view(-1, 2 * (max_animation_length + 1), nc, image_size, image_size)
         labeled_input = torch.cat((image, label), dim=1)
         return self.model(labeled_input)
 
@@ -251,8 +314,11 @@ class MulticlassDiscriminator(nn.Module):
         return self.main(input)
 
 
-def model_init():
-    G = Generator(ngpu).to(device)
+def model_init(use_noise=False):
+    if use_noise:
+        G = NoiseGenerator(ngpu).to(device)
+    else:
+        G = Generator(ngpu).to(device)
     G.apply(weights_init)
     D = Discriminator(ngpu).to(device)
     D.apply(weights_init)
@@ -277,7 +343,7 @@ def dataset_transform(data):
     return result_tensor
 
 
-def single_class_training():
+def single_class_training(use_noise=False):
     # INIT STEP:
     dataset = database_handler.AnimationDataset(root_dir=dataset_root, labeling_file=labels,
                                                 transform=dataset_transform,
@@ -285,33 +351,42 @@ def single_class_training():
                                                                                             int(x[1])]),
                                                 use_palette_swap=True,
                                                 )
-    # To provide the generator with enough power,
-    # we limit the discriminator to only learning from 75% of the database.
-    discriminator_data = np.random.choice(len(dataset), size=3 * len(dataset) // 4, replace=False)
-    dataloader = torch.utils.data.DataLoader(Subset(dataset, discriminator_data), batch_size=batch_size, shuffle=True)
+
+    if use_noise:
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    else:
+        # To provide the generator with enough power,
+        # we limit the discriminator to only learning from 75% of the database.
+        discriminator_data = np.random.choice(len(dataset), size=3 * len(dataset) // 4, replace=False)
+        dataloader = torch.utils.data.DataLoader(Subset(dataset, discriminator_data), batch_size=batch_size,
+                                                 shuffle=True)
+
     # Create models and initialize loss function
-    G, D = model_init()
+    G, D = model_init(use_noise)
     loss_func = nn.BCELoss()
     optimizerD = optim.Adam(D.parameters(), lr=lr, betas=(beta1, 0.999))
     optimizerG = optim.Adam(G.parameters(), lr=lr, betas=(beta1, 0.999))
 
     # Label conventions
     real_label, fake_label = 1, 0
-
     # Things we keep track of to see progress
     img_examples = []
-    example_animation, _ = dataset[np.random.randint(0, len(dataset))]  # TODO
-    example_reference = torch.zeros((1, 1, nc, image_size, image_size))
-    example_reference[0, 0] = example_animation[0]
-    example_reference = example_reference.to(device)
+    # Make a fixed sample for visualization
     example_tags = [np.random.choice(database_handler.AnimationType),
                     np.random.randint(1, max_animation_length)]
-
-    # Display the example image and parameters
-    plt.imshow(database_handler.IMAGE_TRANSFORM(example_animation[0]))
-    plt.title("Animation type: {}\nFrames: {}".format(example_tags[0].name, example_tags[1]))
-    plt.show()
+    if use_noise:
+        example_reference = torch.randn(1, nz, 1, 1, 1, device=device)
+        print(example_tags)
+    else:
+        example_animation, _ = dataset[np.random.randint(0, len(dataset))]  # TODO
+        plt.imshow(database_handler.IMAGE_TRANSFORM(example_animation[0]))
+        example_reference = torch.zeros((1, 1, nc, image_size, image_size))
+        example_reference[0, 0] = example_animation[0]
+        example_reference = example_reference.to(device)
+        plt.title("Animation type: {}\nFrames: {}".format(example_tags[0].name, example_tags[1]))
+        plt.savefig("train_ref.png")
     example_tags = torch.IntTensor([example_tags[0].value, example_tags[1]]).to(device)
+
     G_losses = []
     D_losses = []
     iters = 0
@@ -347,11 +422,12 @@ def single_class_training():
             #                                              np.random.randint(1, max_animation_length),
             #                                              )
             #                    for i in range(b_size)]
-            generator_input = [torch.unsqueeze(dataset.get_reference_frame(np.random.randint(0, len(dataset))), 0)
-                               for _ in range(b_size)]
-            generator_input = torch.stack(generator_input).to(device)
-            assert tuple(generator_input.shape) == (b_size, 1, nc, image_size, image_size)
-
+            if use_noise:
+                generator_input = torch.randn(b_size, nz, 1, 1, 1, device=device)
+            else:
+                generator_input = [torch.unsqueeze(dataset.get_reference_frame(np.random.randint(0, len(dataset))), 0)
+                                   for _ in range(b_size)]
+                generator_input = torch.stack(generator_input).to(device)
             generator_input_labels = torch.IntTensor([
                 [np.random.choice(list(database_handler.AnimationType)).value,
                  np.random.randint(1, max_animation_length)]
@@ -388,7 +464,7 @@ def single_class_training():
             optimizerG.step()
 
             # Output training stats
-            if i % 20 == 0:
+            if i % 50 == 0:
                 print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
                       % (epoch, num_epochs, i, len(dataloader),
                          errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
@@ -413,7 +489,7 @@ def single_class_training():
     plt.xlabel("iterations")
     plt.ylabel("Loss")
     plt.legend()
-    plt.show()
+    plt.savefig("training-graph.png")
     # for i in range(len(img_examples)):
     #     for j in range(max_animation_length + 1):
     #         plt.subplot(4, 5, j + 1)
@@ -425,16 +501,14 @@ def single_class_training():
         plt.subplot(4, 5, j + 1)
         plt.axis("off")
         plt.imshow(img_examples[-1][j])
-    plt.show()
-    save_model = input("Save model? (Y/N)\n")
-    if save_model.upper() == "Y":
-        name = input("Save as: ")
-        torch.save({"generator:": G.state_dict(), "discriminator": D.state_dict()},
-                   os.path.join(model_folder, name + ".pt"))
+    plt.savefig("final-output.png")
+    name = "model-noise-out"
+    torch.save({"generator:": G.state_dict(), "discriminator": D.state_dict()},
+               os.path.join(model_folder, name + ".pt"))
 
 
 def main():
-    single_class_training()
+    single_class_training(use_noise=True)
 
 
 if __name__ == "__main__":

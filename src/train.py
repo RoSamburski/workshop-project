@@ -10,7 +10,7 @@ from torchvision.io import read_image
 import torchvision.utils as vutils
 import numpy as np
 from pathlib import Path
-import matplotlib; matplotlib.use("Agg")
+import matplotlib
 import matplotlib.pyplot as plt
 
 import database_handler
@@ -508,6 +508,7 @@ def single_class_training(use_noise=False):
 
 
 def main():
+    matplotlib.use("Agg")
     single_class_training(use_noise=True)
 
 

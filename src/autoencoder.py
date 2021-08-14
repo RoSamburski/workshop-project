@@ -8,9 +8,9 @@ import database_handler
 import train
 
 
-batch_size = 128
+batch_size = 16
 
-epochs = 100
+epochs = 5
 
 learning_rate = 1e-3
 
@@ -62,6 +62,8 @@ def train_autoencoder():
         labeling_file=database_handler.LABELS,
         root_dir=database_handler.DATASET_ROOT,
         transform=train.dataset_transform,
+        target_transform=lambda x: torch.IntTensor([int(x[0].value),
+                                                    int(x[1])]),
         use_palette_swap=True,
     )
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -71,8 +73,7 @@ def train_autoencoder():
 
     for epoch in range(epochs):
         for data in dataloader:
-            references = data[0][:, 0]
-            print(references.shape)
+            references = data[0][:, 0].to(device)
             references = references.view(references.size(0), -1)
             references = Variable(references)
             output = autoencoder(references)
@@ -84,12 +85,15 @@ def train_autoencoder():
             optimizer.step()
         print("epoch [{}/{}], loss:{:.4f}".format(epoch+1, epochs, loss.data))
 
-    sample = dataset.get_reference_frame(np.random.randint(0, len(dataset)))
-    encoded_sample = autoencoder(Variable(sample.view(sample.size(0), -1)))
+    sample, _ = dataset[np.random.randint(0, len(dataset))]
+    sample = sample[0]
+    encoded_sample = sample.view(-1)
+    encoded_sample = Variable(encoded_sample)
+    encoded_sample = autoencoder(encoded_sample)
     encoded_sample = torch.reshape(encoded_sample, (4, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE))
     plt.title("Before/after")
     plt.subplot(1, 2, 1)
-    plt.imshow(sample)
+    plt.imshow(database_handler.IMAGE_TRANSFORM(sample))
     plt.axis("off")
     plt.subplot(1, 2, 2)
     plt.imshow(database_handler.IMAGE_TRANSFORM(encoded_sample))

@@ -1,16 +1,20 @@
+import os.path
+
 import numpy as np
 import torch
 from torch import nn
+import matplotlib
 import matplotlib.pyplot as plt
 from torch.autograd import Variable
 
 import database_handler
-import train
+import gan_model
 
+autoencoder_file = "autoencoder.pt"
 
 batch_size = 16
 
-epochs = 5
+epochs = 100
 
 learning_rate = 1e-3
 
@@ -21,33 +25,30 @@ ngpu = 1
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
 
+# TODO: change the layer sizes to encode data to size gan_model.nz
 class Autoencoder(nn.Module):
     def __init__(self, ngpu=1):
         super(Autoencoder, self).__init__()
         self.ngpu = ngpu
 
         self.encoder = nn.Sequential(
-            nn.Linear((database_handler.IMAGE_SIZE**2)*4, 256),
+            nn.Linear((database_handler.IMAGE_SIZE**2)*gan_model.nc, 8*gan_model.nz),
             nn.ReLU(True),
-            nn.Linear(256, 128),
+            nn.Linear(8*gan_model.nz, 4*gan_model.nz),
             nn.ReLU(True),
-            nn.Linear(128, 64),
+            nn.Linear(4*gan_model.nz, 2*gan_model.nz),
             nn.ReLU(True),
-            nn.Linear(64, 12),
-            nn.ReLU(True),
-            nn.Linear(12, 3),
+            nn.Linear(2*gan_model.nz, gan_model.nz),
         )
 
         self.decoder = nn.Sequential(
-            nn.Linear(3, 12),
+            nn.Linear(gan_model.nz, 2*gan_model.nz),
             nn.ReLU(True),
-            nn.Linear(12, 64),
+            nn.Linear(2*gan_model.nz, 4*gan_model.nz),
             nn.ReLU(True),
-            nn.Linear(64, 128),
+            nn.Linear(4*gan_model.nz, 8*gan_model.nz),
             nn.ReLU(True),
-            nn.Linear(128, 256),
-            nn.ReLU(True),
-            nn.Linear(256, (database_handler.IMAGE_SIZE ** 2) * 4),
+            nn.Linear(8*gan_model.nz, (database_handler.IMAGE_SIZE**2)*gan_model.nc),
             nn.Tanh(),
         )
 
@@ -61,7 +62,7 @@ def train_autoencoder():
     dataset = database_handler.AnimationDataset(
         labeling_file=database_handler.LABELS,
         root_dir=database_handler.DATASET_ROOT,
-        transform=train.dataset_transform,
+        transform=gan_model.dataset_transform,
         target_transform=lambda x: torch.IntTensor([int(x[0].value),
                                                     int(x[1])]),
         use_palette_swap=True,
@@ -86,7 +87,7 @@ def train_autoencoder():
         print("epoch [{}/{}], loss:{:.4f}".format(epoch+1, epochs, loss.data))
 
     sample, _ = dataset[np.random.randint(0, len(dataset))]
-    sample = sample[0]
+    sample = sample[0].to(device)
     encoded_sample = sample.view(-1)
     encoded_sample = Variable(encoded_sample)
     encoded_sample = autoencoder(encoded_sample)
@@ -98,8 +99,10 @@ def train_autoencoder():
     plt.subplot(1, 2, 2)
     plt.imshow(database_handler.IMAGE_TRANSFORM(encoded_sample))
     plt.axis("off")
-    plt.show()
+    plt.savefig("autoencoder-difference.png")
+    torch.save(autoencoder.state_dict(), os.path.join(gan_model.model_folder, autoencoder_file))
 
 
 if __name__ == "__main__":
+    matplotlib.use("Agg")
     train_autoencoder()

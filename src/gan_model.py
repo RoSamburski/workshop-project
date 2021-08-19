@@ -154,7 +154,7 @@ class Discriminator(nn.Module):
                       bias=False),
             nn.LeakyReLU(0.2, inplace=True),
             # dropout to reduce discriminator's power
-            nn.Dropout(p=dropout),
+            nn.Dropout3d(p=dropout),
             # state size. (ndf, 2, 40, 40)
             nn.Conv3d(ndf, ndf * 2,
                       kernel_size=(2, 4, 4),
@@ -163,7 +163,7 @@ class Discriminator(nn.Module):
                       bias=False),
             nn.BatchNorm3d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout(p=dropout),
+            nn.Dropout3d(p=dropout),
             # state size. (2*ndf, 2, 20, 20)
             nn.Conv3d(ndf * 2, ndf * 4,
                       kernel_size=(2, 4, 4),
@@ -172,7 +172,7 @@ class Discriminator(nn.Module):
                       bias=False),
             nn.BatchNorm3d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout(p=dropout),
+            nn.Dropout3d(p=dropout),
             # state size. (4*ndf, 2, 10, 10)
             nn.Conv3d(ndf * 4, ndf * 8,
                       kernel_size=(2, 4, 4),
@@ -181,7 +181,7 @@ class Discriminator(nn.Module):
                       bias=False),
             nn.BatchNorm3d(ndf * 8),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout(p=dropout),
+            nn.Dropout3d(p=dropout),
             # state size. (8*ndf, 2, 5, 5)
             nn.Conv3d(ndf * 8, 1,
                       kernel_size=(2, 5, 5),
@@ -253,7 +253,7 @@ def single_class_training():
     # Make a fixed sample for visualization
     example_tags = [np.random.choice(database_handler.AnimationType),
                     np.random.randint(1, database_handler.MAX_ANIMATION_LENGTH)]
-    example_animation, _ = dataset[np.random.randint(0, len(dataset))]  # TODO
+    example_animation, _ = dataset[np.random.randint(0, len(dataset))]
     example_noise = torch.randn(1, nz, 1, 1, 1, device=device)
     plt.imshow(database_handler.IMAGE_TRANSFORM(example_animation[0]))
     example_reference = torch.zeros((1, 1, nc, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE))

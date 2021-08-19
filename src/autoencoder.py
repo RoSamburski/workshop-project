@@ -25,7 +25,6 @@ ngpu = 1
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
 
-# TODO: change the layer sizes to encode data to size gan_model.nz
 class Autoencoder(nn.Module):
     def __init__(self, ngpu=1):
         super(Autoencoder, self).__init__()

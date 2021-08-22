@@ -20,7 +20,7 @@ LABELS = "labels.csv"
 
 MAX_ANIMATION_LENGTH = 16
 
-IMAGE_SIZE = 80
+IMAGE_SIZE = 64
 
 IMAGE_TRANSFORM = T.Compose([
         T.ToPILImage(),
@@ -169,23 +169,6 @@ class AnimationDataset(Dataset):
         return self[self.full_dataset.index(name)]
 
 
-def remove_padding():
-    """ Get rid of excess transparent borders"""
-    temporary_folder = "tmp_data"
-    for folder in Path(DATASET_ROOT).iterdir():
-        if folder.is_dir():
-            new_folder_path = Path(os.path.join(temporary_folder, folder.name))
-            if not new_folder_path.exists():
-                os.makedirs(new_folder_path)
-            for image in folder.iterdir():
-                tmp = Image.open(str(image))
-                bbox = tmp.getbbox()
-                result = tmp.crop(bbox)
-                save_path = Path(new_folder_path, image.name)
-                result.save(str(save_path))
-    print("done")
-
-
 def verify(width_limit=IMAGE_SIZE, height_limit=IMAGE_SIZE):
     """
     Validates the database and prints any errors in it.
@@ -329,7 +312,6 @@ def main():
                        "VERIFY dataset and get statistics\n"
                        "GENERATE label file\n"
                        "TEST dataset fetching\n"
-                       "CLEAN image borders\n"
                        "QUIT\n")
         if action.upper() == "VERIFY":
             print("Verifying dataset")
@@ -355,9 +337,6 @@ def main():
         elif action.upper() == "TEST":
             print("Begin testing")
             test_data_fetching()
-        elif action.upper() == "CLEAN":
-            print("opening temporary folder")
-            remove_padding()
         elif action.upper() == "QUIT":
             exit(0)
 

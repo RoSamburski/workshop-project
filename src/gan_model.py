@@ -37,10 +37,10 @@ nz = 100
 embed_dim = 100
 
 # Size of feature maps in generator
-ngf = 32
+ngf = 64
 
 # Size of feature maps in discriminator
-ndf = 32
+ndf = 64
 
 # Number of training epochs
 num_epochs = 5
@@ -83,7 +83,7 @@ class Generator(nn.Module):
         self.model = nn.Sequential(
             # input is noise + encoded reference + encoded label, going into a convolution
             nn.ConvTranspose3d(4 * nz, ngf * 8,
-                               kernel_size=(2, 5, 5),
+                               kernel_size=(2, 4, 4),
                                stride=(1, 1, 1),
                                padding=(0, 0, 0),
                                bias=False),
@@ -95,7 +95,7 @@ class Generator(nn.Module):
                                stride=(2, 2, 2),
                                padding=(1, 1, 1),
                                bias=False),
-            nn.BatchNorm3d(ngf * 4),
+            # nn.BatchNorm3d(ngf * 4),
             nn.ReLU(True),
             # state size. (4*ngf, 2, 10, 10)
             nn.ConvTranspose3d(ngf * 4, ngf * 2,
@@ -103,7 +103,7 @@ class Generator(nn.Module):
                                stride=(2, 2, 2),
                                padding=(1, 1, 1),
                                bias=False),
-            nn.BatchNorm3d(ngf * 2),
+            # nn.BatchNorm3d(ngf * 2),
             nn.ReLU(True),
             # state size. (2*ngf, 2, 20, 20)
             nn.ConvTranspose3d(ngf * 2, ngf,
@@ -120,7 +120,7 @@ class Generator(nn.Module):
                                padding=(1, 1, 1),
                                bias=False),
             nn.Tanh()
-            # state size. (mal+1, 4, 80, 80)
+            # state size. (mal, 4, 80, 80)
         )
 
     def forward(self, input):
@@ -152,6 +152,7 @@ class Discriminator(nn.Module):
                       stride=(2, 2, 2),
                       padding=(1, 1, 1),
                       bias=False),
+            nn.BatchNorm3d(ndf),
             nn.LeakyReLU(0.2, inplace=True),
             # dropout to reduce discriminator's power
             nn.Dropout3d(p=dropout),
@@ -161,7 +162,7 @@ class Discriminator(nn.Module):
                       stride=(2, 2, 2),
                       padding=(1, 1, 1),
                       bias=False),
-            nn.BatchNorm3d(ndf * 2),
+            # nn.BatchNorm3d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout3d(p=dropout),
             # state size. (2*ndf, 2, 20, 20)
@@ -170,7 +171,7 @@ class Discriminator(nn.Module):
                       stride=(2, 2, 2),
                       padding=(1, 1, 1),
                       bias=False),
-            nn.BatchNorm3d(ndf * 4),
+            # nn.BatchNorm3d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout3d(p=dropout),
             # state size. (4*ndf, 2, 10, 10)
@@ -184,7 +185,7 @@ class Discriminator(nn.Module):
             nn.Dropout3d(p=dropout),
             # state size. (8*ndf, 2, 5, 5)
             nn.Conv3d(ndf * 8, 1,
-                      kernel_size=(2, 5, 5),
+                      kernel_size=(2, 4, 4),
                       stride=(1, 1, 1),
                       padding=(0, 0, 0),
                       bias=False),
@@ -302,6 +303,7 @@ def single_class_training():
                 torch.unsqueeze(dataset.get_reference_frame(np.random.randint(0, len(dataset))), 0)
                 for _ in range(b_size)]
             generator_input_images = torch.stack(generator_input_images).to(device)
+            generator_input_images = real_cpu[:, 0].view(-1, 1, nc, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE)
             generator_input_noise = torch.randn((b_size, nz, 1, 1, 1), device=device)
             generator_input_labels = torch.IntTensor([
                 [np.random.choice(list(database_handler.AnimationType)).value,
@@ -309,10 +311,11 @@ def single_class_training():
                 for _ in range(b_size)
             ]).to(device)
             # Generate fake image batch with G
-            fake = G((generator_input_noise, generator_input_images, generator_input_labels))
+            # TODO: Check how using original pass' references and labels function
+            fake = G((generator_input_noise, generator_input_images, real_cpu_labels))
             label.fill_(fake_label)
             # Classify all fake batch with D
-            output = D((fake.detach(), generator_input_labels)).view(-1)
+            output = D((fake.detach(), real_cpu_labels)).view(-1)
             # Calculate D's loss on the all-fake batch
             errD_fake = loss_func(output, label)
             # Calculate the gradients for this batch, accumulated (summed) with previous gradients
@@ -329,7 +332,7 @@ def single_class_training():
             G.zero_grad()
             label.fill_(real_label)  # fake labels are real for generator cost
             # Since we just updated D, perform another forward pass of all-fake batch through D
-            output = D((fake.detach(), generator_input_labels)).view(-1)
+            output = D((fake.detach(), real_cpu_labels)).view(-1)
             # Calculate G's loss based on this output
             errG = loss_func(output, label)
             # Calculate gradients for G

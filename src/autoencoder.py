@@ -10,7 +10,7 @@ from torch.autograd import Variable
 import database_handler
 import gan_model
 
-autoencoder_file = "autoencoder.pt"
+autoencoder_file = "conv-autoencoder.pt"
 
 batch_size = 16
 
@@ -57,6 +57,66 @@ class Autoencoder(nn.Module):
         return x
 
 
+class ConvolutionalAutoencoder(nn.Module):
+    def __init__(self, ngpu=1):
+        super(ConvolutionalAutoencoder, self).__init__()
+        self.ngpu = ngpu
+
+        self.encoder = nn.Sequential(
+            # Input: (4, 64, 64)
+            nn.Conv2d(3, 4*gan_model.nz,
+                      kernel_size=(4, 4),
+                      stride=(4, 4),
+                      padding=(1, 1)
+                      ),
+            nn.ReLU(True),
+            # State: (400, 16, 16)
+            nn.Conv2d(4*gan_model.nz, 2*gan_model.nz,
+                      kernel_size=(4, 4),
+                      stride=(4, 4),
+                      padding=(1, 1)
+                      ),
+            nn.ReLU(True),
+            # State: (200, 4, 4)
+            nn.Conv2d(2*gan_model.nz, gan_model.nz,
+                      kernel_size=(4, 4),
+                      stride=(4, 4),
+                      padding=(1, 1)
+                      ),
+            # Out: (100, 1, 1)
+        )
+
+        self.decoder = nn.Sequential(
+            # Input: (100, 1, 1)
+            nn.ConvTranspose2d(gan_model.nz, 2*gan_model.nz,
+                               kernel_size=(4, 4),
+                               stride=(4, 4),
+                               padding=(0, 0),
+                               ),
+            nn.ReLU(True),
+            # State: (200, 4, 4)
+            nn.ConvTranspose2d(2*gan_model.nz, 4*gan_model.nz,
+                               kernel_size=(4, 4),
+                               stride=(4, 4),
+                               padding=(0, 0),
+                               ),
+            nn.ReLU(True),
+            # State: (400, 16, 16)
+            nn.ConvTranspose2d(4*gan_model.nz, gan_model.nc,
+                               kernel_size=(4, 4),
+                               stride=(4, 4),
+                               padding=(0, 0),
+                               ),
+            nn.Tanh(),
+            # Out: (3, 64, 64)
+        )
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+
 def train_autoencoder():
     dataset = database_handler.AnimationDataset(
         labeling_file=database_handler.LABELS,
@@ -67,7 +127,7 @@ def train_autoencoder():
         use_palette_swap=True,
     )
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    autoencoder = Autoencoder(ngpu).to(device)
+    autoencoder = ConvolutionalAutoencoder(ngpu).to(device)
     optimizer = torch.optim.Adam(autoencoder.parameters(), lr=learning_rate, weight_decay=weight_decay)
     loss_func = nn.MSELoss()
 
@@ -98,7 +158,7 @@ def train_autoencoder():
     plt.subplot(1, 2, 2)
     plt.imshow(database_handler.IMAGE_TRANSFORM(encoded_sample))
     plt.axis("off")
-    plt.savefig("autoencoder-difference.png")
+    plt.savefig("conv-autoencoder-difference.png")
     torch.save(autoencoder.state_dict(), os.path.join(gan_model.model_folder, autoencoder_file))
 
 

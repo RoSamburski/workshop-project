@@ -177,9 +177,15 @@ class AnimationDataset(Dataset):
             # Label format:
             # (Type, Animation-Length)
             # Currently ignores direction
-            if self.use_palette_swap:
+            if self.use_palette_swap and self.use_negative:
+                label = (AnimationType.parse_string(self.label_set.iloc[idx // 48, 1]),
+                         min(len(animation), MAX_ANIMATION_LENGTH))
+            elif self.use_palette_swap:
                 label = (AnimationType.parse_string(self.label_set.iloc[idx//6, 1]),
                      min(len(animation), MAX_ANIMATION_LENGTH))
+            elif self.use_negative:
+                label = (AnimationType.parse_string(self.label_set.iloc[idx // 8, 1]),
+                         min(len(animation), MAX_ANIMATION_LENGTH))
             else:
                 label = (AnimationType.parse_string(self.label_set.iloc[idx, 1]),
                          min(len(animation), MAX_ANIMATION_LENGTH))
@@ -338,6 +344,7 @@ def full_fetch(dataset):
     for i in range(len(dataset)):
         try:
             fetch_image, fetch_label = dataset[i]
+            assert (fetch_image is not None) and (fetch_label is not None)
             count += 1
         except Exception as e:
             print("Error fetching #{}:\n{}".format(i, e))

@@ -70,7 +70,7 @@ class AnimationDataset(Dataset):
     2. Animation frames (titled as numbers by order: 0.png to <MAL-1>.png)
     The labeling file contains the folder names, followed by the metadata of the animation (direction+type)
     """
-    def __init__(self, labeling_file, root_dir, transform=None, target_transform=None, use_palette_swap=False):
+    def __init__(self, labeling_file, root_dir, transform=None, target_transform=None, use_palette_swap=False, use_negative=False):
         self.label_set = pd.read_csv(labeling_file)
         self.root_dir = root_dir
         self.full_dataset = self.build_dataset()
@@ -87,15 +87,58 @@ class AnimationDataset(Dataset):
             (2, 0, 1),
             (2, 1, 0),
         ]
+        # Whether to allow negatives of RGB channels.
+        # Flipping some or all channels multiplies the usable dataset size by 8
+        self.use_negative = use_negative
+        self.negative_filters = [
+            (0, 0, 0),
+            (1, 0, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (1, 1, 0),
+            (1, 0, 1),
+            (0, 1, 1),
+            (1, 1, 1),
+        ]
 
     def __len__(self):
-        if self.use_palette_swap:
+        if self.use_palette_swap and self.use_negative:
+            return 48*len(self.label_set)
+        elif self.use_palette_swap:
             return 6*len(self.label_set)
+        elif self.use_negative:
+            return 8*len(self.label_set)
         return len(self.label_set)
 
+    def negative_transformation(self, frame, mask_idx):
+        channels = frame.split()
+        neg_mask = self.negative_filters[mask_idx]
+        out_channels = []
+        for i in range(3):
+            if neg_mask[i] == 1:
+                out_channels.append(channels[i].point(lambda x: 255 - x))
+            else:
+                out_channels.append(channels[i])
+        out_channels.append(channels[3])
+        return Image.merge(mode="RGBA", bands=out_channels)
+
+    def permutation_transformation(self, frame, perm_idx):
+        channels = frame.split()
+        permutation = self.palette_permutations[perm_idx]
+        # Reorder the RGB channels. leave Alpha channel at place
+        out_channels = (channels[permutation[0]],
+                        channels[permutation[1]],
+                        channels[permutation[2]],
+                        channels[3])
+        return Image.merge(mode="RGBA", bands=out_channels)
+
     def __getitem__(self, idx):
-        if self.use_palette_swap:
+        if self.use_palette_swap and self.use_negative:
+            char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx//48, 0]))
+        elif self.use_palette_swap:
             char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx//6, 0]))
+        elif self.use_negative:
+            char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx//8, 0]))
         else:
             char_path = Path(os.path.join(self.root_dir, self.label_set.iloc[idx, 0]))
         # print("Fetching {}".format(char_path))
@@ -121,18 +164,13 @@ class AnimationDataset(Dataset):
         else:
             animation = [animation[i] for i in range(len(animation))]
         item = [reference] + animation
-        if self.use_palette_swap:
-            tmp = []
-            for frame in item:
-                channels = frame.split()
-                permutation = self.palette_permutations[idx % 6]
-                # Reorder the RGB channels. leave Alpha channel at place
-                out_channels = (channels[permutation[0]],
-                                channels[permutation[1]],
-                                channels[permutation[2]],
-                                channels[3])
-                tmp.append(Image.merge(mode="RGBA", bands=out_channels))
-            item = tmp
+        if self.use_negative and self.use_palette_swap:
+            item = [self.negative_transformation(frame, idx % 8) for frame in item]
+            item = [self.permutation_transformation(frame, (idx//8) % 6) for frame in item]
+        elif self.use_negative:
+            item = [self.negative_transformation(frame, idx % 8) for frame in item]
+        elif self.use_palette_swap:
+            item = [self.permutation_transformation(frame, idx % 6) for frame in item]
         if self.transform:
             item = self.transform(item)
         try:
@@ -234,7 +272,7 @@ def generate_label_file():
 
 def test_data_fetching():
     dataset = AnimationDataset(labeling_file=LABELS, root_dir=DATASET_ROOT,
-                               use_palette_swap=True)
+                               use_palette_swap=True, use_negative=True)
     done = False
     while not done:
         test_type = input("Fetch Type:\n"

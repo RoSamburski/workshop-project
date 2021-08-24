@@ -52,7 +52,7 @@ lr = 0.0002
 beta1 = 0.5
 
 # Dropout rate for multi-class Discriminator
-dropout = 0.2
+dropout = 0.3
 
 # Number of GPUs available. The computer used to training has one.
 ngpu = 1
@@ -103,7 +103,7 @@ class Generator(nn.Module):
                                stride=(2, 2, 2),
                                padding=(1, 1, 1),
                                bias=False),
-            # nn.BatchNorm3d(ngf * 2),
+            nn.BatchNorm3d(ngf * 2),
             nn.ReLU(True),
             # state size. (2*ngf, 2, 20, 20)
             nn.ConvTranspose3d(ngf * 2, ngf,
@@ -111,7 +111,7 @@ class Generator(nn.Module):
                                stride=(2, 2, 2),
                                padding=(1, 1, 1),
                                bias=False),
-            nn.BatchNorm3d(ngf),
+            # nn.BatchNorm3d(ngf),
             nn.ReLU(True),
             # state size. (ngf, 2, 40, 40)
             nn.ConvTranspose3d(ngf, database_handler.MAX_ANIMATION_LENGTH,
@@ -126,7 +126,7 @@ class Generator(nn.Module):
     def forward(self, input):
         noise, image, label = input
         label = self.label_transform(label).view(-1, 2*nz, 1, 1, 1)
-        encoded_image = image.view(image.size(0), -1)
+        encoded_image = image.view(-1, nc, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE)
         encoded_image = self.encoder(encoded_image)
         encoded_image = encoded_image.view(-1, nz, 1, 1, 1)
         labeled_input = torch.cat((noise, encoded_image, label), dim=1)
@@ -152,7 +152,7 @@ class Discriminator(nn.Module):
                       stride=(2, 2, 2),
                       padding=(1, 1, 1),
                       bias=False),
-            nn.BatchNorm3d(ndf),
+            # nn.BatchNorm3d(ndf),
             nn.LeakyReLU(0.2, inplace=True),
             # dropout to reduce discriminator's power
             nn.Dropout3d(p=dropout),
@@ -162,7 +162,7 @@ class Discriminator(nn.Module):
                       stride=(2, 2, 2),
                       padding=(1, 1, 1),
                       bias=False),
-            # nn.BatchNorm3d(ndf * 2),
+            nn.BatchNorm3d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout3d(p=dropout),
             # state size. (2*ndf, 2, 20, 20)
@@ -216,7 +216,7 @@ def dataset_transform(data):
 
 
 def model_init():
-    autoencoder = aenc.Autoencoder()
+    autoencoder = aenc.ConvolutionalAutoencoder()
     autoencoder.load_state_dict(torch.load(os.path.join(model_folder, aenc.autoencoder_file)))
     autoencoder.eval()
     G = Generator(ngpu, input_encoder=autoencoder.encoder).to(device)
@@ -234,6 +234,7 @@ def single_class_training():
                                                 target_transform=lambda x: torch.IntTensor([int(x[0].value),
                                                                                             int(x[1])]),
                                                 use_palette_swap=True,
+                                                use_negative=True,
                                                 )
     # To provide the generator with enough power,
     # we limit the discriminator to only learning from 75% of the database.

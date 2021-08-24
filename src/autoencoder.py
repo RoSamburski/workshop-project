@@ -64,7 +64,7 @@ class ConvolutionalAutoencoder(nn.Module):
 
         self.encoder = nn.Sequential(
             # Input: (4, 64, 64)
-            nn.Conv2d(3, 4*gan_model.nz,
+            nn.Conv2d(gan_model.nc, 4*gan_model.nz,
                       kernel_size=(4, 4),
                       stride=(4, 4),
                       padding=(1, 1)
@@ -108,7 +108,7 @@ class ConvolutionalAutoencoder(nn.Module):
                                padding=(0, 0),
                                ),
             nn.Tanh(),
-            # Out: (3, 64, 64)
+            # Out: (4, 64, 64)
         )
 
     def forward(self, x):
@@ -125,6 +125,7 @@ def train_autoencoder():
         target_transform=lambda x: torch.IntTensor([int(x[0].value),
                                                     int(x[1])]),
         use_palette_swap=True,
+        use_negative=True,
     )
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
     autoencoder = ConvolutionalAutoencoder(ngpu).to(device)
@@ -134,7 +135,7 @@ def train_autoencoder():
     for epoch in range(epochs):
         for data in dataloader:
             references = data[0][:, 0].to(device)
-            references = references.view(references.size(0), -1)
+            # references = references.view(references.size(0), -1)
             references = Variable(references)
             output = autoencoder(references)
 
@@ -147,10 +148,11 @@ def train_autoencoder():
 
     sample, _ = dataset[np.random.randint(0, len(dataset))]
     sample = sample[0].to(device)
-    encoded_sample = sample.view(-1)
-    encoded_sample = Variable(encoded_sample)
-    encoded_sample = autoencoder(encoded_sample)
-    encoded_sample = torch.reshape(encoded_sample, (4, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE))
+    # encoded_sample = sample.view(-1)
+    # encoded_sample = Variable(encoded_sample)
+    # encoded_sample = autoencoder(encoded_sample)
+    # encoded_sample = torch.reshape(encoded_sample, (4, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE))
+    encoded_sample = Variable(sample)
     plt.title("Before/after")
     plt.subplot(1, 2, 1)
     plt.imshow(database_handler.IMAGE_TRANSFORM(sample))

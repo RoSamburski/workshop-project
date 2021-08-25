@@ -24,8 +24,11 @@ IMAGE_SIZE = 64
 
 IMAGE_TRANSFORM = T.Compose([
         T.ToPILImage(),
-        np.array,
+        # np.array,
     ])
+
+# number of parameters in labels. Currently 2 (type, length)
+NUM_PARAMETERS = 2
 
 
 class AnimationType(Enum):

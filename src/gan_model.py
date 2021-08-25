@@ -15,6 +15,8 @@ import autoencoder as aenc
 """ CONSTANTS """
 model_folder = "models"
 
+model_name = "model-out.pt"
+
 batch_size = 16
 
 # number of color channels in images. We use RGBA images so 4
@@ -75,14 +77,11 @@ class Generator(nn.Module):
     def __init__(self, ngpu, input_encoder=None):
         super(Generator, self).__init__()
         self.ngpu = ngpu
-        self.label_transform = nn.Sequential(
-            nn.Embedding(len(database_handler.AnimationType) * database_handler.MAX_ANIMATION_LENGTH, embed_dim),
-            nn.Linear(embed_dim, nz)
-        )
+        self.label_transform = nn.ConvTranspose1d(database_handler.NUM_PARAMETERS, nz, kernel_size=(1,))
         self.encoder = input_encoder
         self.model = nn.Sequential(
             # input is noise + encoded reference + encoded label, going into a convolution
-            nn.ConvTranspose3d(4 * nz, ngf * 8,
+            nn.ConvTranspose3d(3 * nz, ngf * 8,
                                kernel_size=(2, 4, 4),
                                stride=(1, 1, 1),
                                padding=(0, 0, 0),
@@ -125,7 +124,7 @@ class Generator(nn.Module):
 
     def forward(self, input):
         noise, image, label = input
-        label = self.label_transform(label).view(-1, 2*nz, 1, 1, 1)
+        label = self.label_transform(label.view(-1, database_handler.NUM_PARAMETERS, 1)).view(-1, nz, 1, 1, 1)
         encoded_image = image.view(-1, nc, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE)
         encoded_image = self.encoder(encoded_image)
         encoded_image = encoded_image.view(-1, nz, 1, 1, 1)
@@ -139,15 +138,15 @@ class Discriminator(nn.Module):
     def __init__(self, ngpu):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
-        self.label_transform = nn.Sequential(
-            nn.Embedding(len(database_handler.AnimationType) * database_handler.MAX_ANIMATION_LENGTH, embed_dim),
-            nn.Linear(embed_dim, (database_handler.MAX_ANIMATION_LENGTH + 1) * nc * (database_handler.IMAGE_SIZE ** 2))
-        )
+        self.label_transform = nn.ConvTranspose1d(database_handler.NUM_PARAMETERS,
+                                                  (database_handler.MAX_ANIMATION_LENGTH + 1) *
+                                                  nc * (database_handler.IMAGE_SIZE**2),
+                                                  kernel_size=(1,))
         self.model = nn.Sequential(
             # input dimensions are (2*(mal+1), nc, image_size, image_size)
             # The first dimension is "doubled" because of the label
             # Following are calculations for nc=4, image_size=80:
-            nn.Conv3d(3 * (database_handler.MAX_ANIMATION_LENGTH + 1), ndf,
+            nn.Conv3d(2 * (database_handler.MAX_ANIMATION_LENGTH + 1), ndf,
                       kernel_size=(4, 4, 4),
                       stride=(2, 2, 2),
                       padding=(1, 1, 1),
@@ -194,8 +193,8 @@ class Discriminator(nn.Module):
 
     def forward(self, input):
         image, label = input
-        label = self.label_transform(label).view(-1,
-                                                 2 * (database_handler.MAX_ANIMATION_LENGTH + 1),
+        label = self.label_transform(label.view(-1, database_handler.NUM_PARAMETERS, 1)).view(-1,
+                                                 (database_handler.MAX_ANIMATION_LENGTH + 1),
                                                  nc,
                                                  database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE)
         labeled_input = torch.cat((image, label), dim=1)
@@ -217,7 +216,8 @@ def dataset_transform(data):
 
 def model_init():
     autoencoder = aenc.ConvolutionalAutoencoder()
-    autoencoder.load_state_dict(torch.load(os.path.join(model_folder, aenc.autoencoder_file)))
+    autoencoder.load_state_dict(torch.load(os.path.join(model_folder, aenc.autoencoder_file),
+                                           map_location=device))
     autoencoder.eval()
     G = Generator(ngpu, input_encoder=autoencoder.encoder).to(device)
     G.apply(weights_init)
@@ -231,8 +231,7 @@ def single_class_training():
     dataset = database_handler.AnimationDataset(root_dir=database_handler.DATASET_ROOT,
                                                 labeling_file=database_handler.LABELS,
                                                 transform=dataset_transform,
-                                                target_transform=lambda x: torch.IntTensor([int(x[0].value),
-                                                                                            int(x[1])]),
+                                                target_transform=lambda x: torch.Tensor([x[0].value, x[1]]),
                                                 use_palette_swap=True,
                                                 use_negative=True,
                                                 )
@@ -263,7 +262,7 @@ def single_class_training():
     example_reference = example_reference.to(device)
     plt.title("Animation type: {}\nFrames: {}".format(example_tags[0].name, example_tags[1]))
     plt.savefig("train_ref.png")
-    example_tags = torch.IntTensor([example_tags[0].value, example_tags[1]]).to(device)
+    example_tags = torch.Tensor([example_tags[0].value, example_tags[1]]).to(device)
 
     G_losses = []
     D_losses = []
@@ -306,7 +305,7 @@ def single_class_training():
             generator_input_images = torch.stack(generator_input_images).to(device)
             generator_input_images = real_cpu[:, 0].view(-1, 1, nc, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE)
             generator_input_noise = torch.randn((b_size, nz, 1, 1, 1), device=device)
-            generator_input_labels = torch.IntTensor([
+            generator_input_labels = torch.Tensor([
                 [np.random.choice(list(database_handler.AnimationType)).value,
                  np.random.randint(1, database_handler.MAX_ANIMATION_LENGTH)]
                 for _ in range(b_size)
@@ -381,9 +380,8 @@ def single_class_training():
         plt.axis("off")
         plt.imshow(img_examples[-1][j])
     plt.savefig("final-output.png")
-    name = "model-out"
-    torch.save({"generator:": G.state_dict(), "discriminator": D.state_dict()},
-               os.path.join(model_folder, name + ".pt"))
+    torch.save({"generator": G.state_dict(), "discriminator": D.state_dict()},
+               os.path.join(model_folder, model_name))
 
 
 def main():

@@ -15,9 +15,7 @@ import autoencoder as aenc
 """ CONSTANTS """
 model_folder = "models"
 
-model_name = "model-out.pt"
-
-batch_size = 16
+batch_size = 32
 
 # number of color channels in images. We use RGBA images so 4
 # We will actually do color reduction later as every image will use its' own palette.
@@ -45,7 +43,7 @@ ngf = 64
 ndf = 64
 
 # Number of training epochs
-num_epochs = 5
+num_epochs = 100
 
 # Learning rate for optimizers
 lr = 0.0002
@@ -54,7 +52,7 @@ lr = 0.0002
 beta1 = 0.5
 
 # Dropout rate for multi-class Discriminator
-dropout = 0.3
+dropout = 0.4
 
 # Number of GPUs available. The computer used to training has one.
 ngpu = 1
@@ -216,8 +214,7 @@ def dataset_transform(data):
 
 def model_init():
     autoencoder = aenc.ConvolutionalAutoencoder()
-    autoencoder.load_state_dict(torch.load(os.path.join(model_folder, aenc.autoencoder_file),
-                                           map_location=device))
+    autoencoder.load_state_dict(torch.load(os.path.join(model_folder, aenc.autoencoder_file)))
     autoencoder.eval()
     G = Generator(ngpu, input_encoder=autoencoder.encoder).to(device)
     G.apply(weights_init)
@@ -380,8 +377,9 @@ def single_class_training():
         plt.axis("off")
         plt.imshow(img_examples[-1][j])
     plt.savefig("final-output.png")
+    name = "model-out"
     torch.save({"generator": G.state_dict(), "discriminator": D.state_dict()},
-               os.path.join(model_folder, model_name))
+               os.path.join(model_folder, name + ".pt"))
 
 
 def main():

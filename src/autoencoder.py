@@ -12,9 +12,9 @@ import gan_model
 
 autoencoder_file = "conv-autoencoder.pt"
 
-batch_size = 16
+batch_size = 32
 
-epochs = 100
+epochs = 10
 
 learning_rate = 1e-3
 

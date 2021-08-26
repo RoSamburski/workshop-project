@@ -8,23 +8,25 @@ import matplotlib.pyplot as plt
 
 import gan_model
 import database_handler
+import autoencoder
 
 
 def generate(reference_path: str, animation_type: database_handler.AnimationType, frame_count: int) -> torch.Tensor:
-    generator = gan_model.Generator(gan_model.ngpu)
+    encoder = autoencoder.ConvolutionalAutoencoder(gan_model.ngpu)
+    generator = gan_model.Generator(gan_model.ngpu, encoder.encoder)
     model = torch.load(os.path.join(gan_model.model_folder, gan_model.model_name), map_location=gan_model.device)
     generator.load_state_dict(model["generator"])
     generator.eval()
 
-    reference_image = gan_model.dataset_transform([Image.open(reference_path)])[0].to(gan_model.device)
-    tags = torch.Tensor((animation_type.value, frame_count)).to(gan_model.device)
+    reference_image = gan_model.dataset_transform([Image.open(reference_path)])[0]\
+        .view(1, 1, gan_model.nc, database_handler.IMAGE_SIZE, database_handler.IMAGE_SIZE).to(gan_model.device)
+    tags = torch.Tensor((animation_type.value, frame_count)).view(1, 2).to(gan_model.device)
     noise = torch.randn(1, gan_model.nz, 1, 1, 1, device=gan_model.device)
     return generator((noise, reference_image, tags)).detach().cpu()[0]
 
 
 def main():
-    print(sys.argv)
-    if len(sys.argv) < 4:
+    if len(sys.argv) < 5:
         print("USAGE: python3 generate.py <path-to-reference-image> <animation-type> <animation-length> <out-folder>")
         return
     reference_path = sys.argv[1]
@@ -49,7 +51,7 @@ def main():
     for j in range(database_handler.MAX_ANIMATION_LENGTH + 1):
         plt.subplot(4, 5, j + 1)
         plt.axis("off")
-        plt.imshow(output[j])
+        plt.imshow(database_handler.IMAGE_TRANSFORM(output[j]))
     plt.show()
     out_folder = Path(sys.argv[4])
     if not out_folder.exists():

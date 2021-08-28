@@ -15,6 +15,8 @@ import autoencoder as aenc
 """ CONSTANTS """
 model_folder = "models"
 
+model_name = "model-out.pt"
+
 batch_size = 32
 
 # number of color channels in images. We use RGBA images so 4
@@ -130,6 +132,7 @@ class Generator(nn.Module):
         out = self.model(labeled_input)
         # We want to force the generator to match the image to the given reference image
         return torch.cat((image, out), dim=1)
+        # return out
 
 
 class Discriminator(nn.Module):
@@ -137,8 +140,8 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
         self.label_transform = nn.ConvTranspose1d(database_handler.NUM_PARAMETERS,
-                                                  (database_handler.MAX_ANIMATION_LENGTH + 1) *
-                                                  nc * (database_handler.IMAGE_SIZE**2),
+                                                  database_handler.MAX_ANIMATION_LENGTH *
+                                                  nc * (database_handler.IMAGE_SIZE ** 2),
                                                   kernel_size=(1,))
         self.model = nn.Sequential(
             # input dimensions are (2*(mal+1), nc, image_size, image_size)
@@ -153,7 +156,7 @@ class Discriminator(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
             # dropout to reduce discriminator's power
             nn.Dropout3d(p=dropout),
-            # state size. (ndf, 2, 40, 40)
+            # state size. (ndf, 2, 32, 32)
             nn.Conv3d(ndf, ndf * 2,
                       kernel_size=(2, 4, 4),
                       stride=(2, 2, 2),
@@ -162,7 +165,7 @@ class Discriminator(nn.Module):
             nn.BatchNorm3d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout3d(p=dropout),
-            # state size. (2*ndf, 2, 20, 20)
+            # state size. (2*ndf, 2, 16, 16)
             nn.Conv3d(ndf * 2, ndf * 4,
                       kernel_size=(2, 4, 4),
                       stride=(2, 2, 2),
@@ -171,7 +174,7 @@ class Discriminator(nn.Module):
             # nn.BatchNorm3d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout3d(p=dropout),
-            # state size. (4*ndf, 2, 10, 10)
+            # state size. (4*ndf, 2, 8, 8)
             nn.Conv3d(ndf * 4, ndf * 8,
                       kernel_size=(2, 4, 4),
                       stride=(2, 2, 2),
@@ -180,7 +183,7 @@ class Discriminator(nn.Module):
             nn.BatchNorm3d(ndf * 8),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout3d(p=dropout),
-            # state size. (8*ndf, 2, 5, 5)
+            # state size. (8*ndf, 2, 4, 4)
             nn.Conv3d(ndf * 8, 1,
                       kernel_size=(2, 4, 4),
                       stride=(1, 1, 1),
@@ -308,7 +311,6 @@ def single_class_training():
                 for _ in range(b_size)
             ]).to(device)
             # Generate fake image batch with G
-            # TODO: Check how using original pass' references and labels function
             fake = G((generator_input_noise, generator_input_images, real_cpu_labels))
             label.fill_(fake_label)
             # Classify all fake batch with D
@@ -377,9 +379,8 @@ def single_class_training():
         plt.axis("off")
         plt.imshow(img_examples[-1][j])
     plt.savefig("final-output.png")
-    name = "model-out"
     torch.save({"generator": G.state_dict(), "discriminator": D.state_dict()},
-               os.path.join(model_folder, name + ".pt"))
+               os.path.join(model_folder, model_name))
 
 
 def main():
